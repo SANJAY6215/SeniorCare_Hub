@@ -32,50 +32,117 @@ export default function AISymptomChecker({ onClose }: { onClose: () => void }) {
   const [isTyping, setIsTyping] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
 
-  // Local Clinical Heuristic Engine (Prototype Mock AI)
-  const processSymptom = (input: string) => {
-    const text = input.toLowerCase();
-    
-    // Emergency Triggers
-    if (text.includes('chest pain') || text.includes('heart attack') || text.includes('bleeding') || text.includes('stroke')) {
-      return "🚨 CRITICAL WARNING 🚨\nThese symptoms suggest a severe medical emergency. Please press your SOS button immediately or dial emergency services.";
+  // --- Structured Triage Engine ---
+  const [triageState, setTriageState] = useState<{
+    stage: 'initial' | 'clarifying' | 'result';
+    category?: string;
+    subCategory?: string;
+    answers: Record<string, string>;
+  }>({ stage: 'initial', answers: {} });
+
+  const SYMPTOM_DB: any = {
+    cardiac: {
+      triggers: ['chest pain', 'heart', 'tightness', 'left arm'],
+      questions: [
+        "Is the pain sharp, or does it feel like a heavy weight or pressure?",
+        "Does the pain spread to your neck, jaw, or left arm?",
+        "Are you also feeling short of breath or nauseous?"
+      ],
+      conclusion: (answers: any) => {
+        const severe = answers[0]?.includes('pressure') || answers[1]?.includes('yes') || answers[2]?.includes('yes');
+        if (severe) return "🚨 EMERGENCY ALERT: Your symptoms suggest a potential cardiac event. PLEASE CALL EMERGENCY SERVICES (911/112) AND PRESS YOUR SOS BUTTON IMMEDIATELY.";
+        return "You are experiencing chest discomfort. While it may not be an immediate emergency, please rest and contact your doctor for an urgent appointment today.";
+      }
+    },
+    respiratory: {
+      triggers: ['breath', 'cough', 'wheezing', 'lungs'],
+      questions: [
+        "Is it difficult to breathe even while sitting still?",
+        "Are you coughing up any colored phlegm or blood?",
+        "Do you have a fever?"
+      ],
+      conclusion: (answers: any) => {
+        if (answers[0]?.includes('yes')) return "🚩 URGENT: Difficulty breathing while resting is serious. Please contact your doctor or visit urgent care immediately.";
+        return "It sounds like a respiratory issue. Rest, stay hydrated, and monitor your temperature. If breathing becomes difficult, seek immediate care.";
+      }
+    },
+    neurological: {
+      triggers: ['dizzy', 'faint', 'stroke', 'numb', 'speech'],
+      questions: [
+        "Are you experiencing any facial drooping or sudden weakness on one side?",
+        "Is your speech slurred or are you having trouble finding words?",
+        "When did these symptoms start exactly?"
+      ],
+      conclusion: (answers: any) => {
+        if (answers[0]?.includes('yes') || answers[1]?.includes('yes')) return "🚨 CRITICAL: These could be signs of a stroke. EVERY MINUTE COUNTS. Call emergency services immediately.";
+        return "Dizziness can be caused by dehydration or blood pressure changes. Please sit down, drink water, and notify your caregiver.";
+      }
+    },
+    digestive: {
+      triggers: ['stomach', 'belly', 'nausea', 'vomit', 'diarrhea'],
+      questions: [
+        "Where exactly is the pain located (Upper, Lower, Left, Right)?",
+        "Is the pain sharp and stabbing, or a dull ache?",
+        "Have you been able to kept fluids down today?"
+      ],
+      conclusion: (answers: any) => {
+        if (answers[1]?.includes('sharp') && answers[0]?.includes('right')) return "🚩 URGENT: Sharp pain in the lower right abdomen could indicate appendicitis. Please consult a doctor immediately.";
+        return "Digestive upset is common but needs monitoring. Focus on small sips of water. If the pain becomes severe or localized, seek medical advice.";
+      }
     }
+  };
+
+  const processResponse = (userInput: string) => {
+    const text = userInput.toLowerCase();
     
-    // High Urgency
-    if (text.includes('dizzy') || text.includes('fainted') || text.includes('fall') || text.includes('can\'t breathe')) {
-      return "I strongly advise you to sit down and rest immediately. Please contact your Caregiver or a doctor. Would you like me to trigger your SOS alert?";
+    // Stage 1: Initial Discovery
+    if (triageState.stage === 'initial') {
+      for (const cat in SYMPTOM_DB) {
+        if (SYMPTOM_DB[cat].triggers.some((t: string) => text.includes(t))) {
+          setTriageState({
+            stage: 'clarifying',
+            category: cat,
+            answers: {}
+          });
+          return `I've noted your concern related to ${cat}. To help me understand better, ${SYMPTOM_DB[cat].questions[0]}`;
+        }
+      }
+      return "I hear you. Could you tell me a bit more? For example, where exactly do you feel this, and how long has it been happening?";
     }
 
-    // Common Symptoms
-    if (text.includes('fever') || text.includes('hot')) {
-      return "A fever indicates your body is fighting off an infection. Please stay hydrated and rest. If it exceeds 103°F (39.4°C) or lasts more than 3 days, schedule a doctor's visit.";
-    }
-    if (text.includes('headache') || text.includes('head hurts')) {
-      return "Headaches can be caused by dehydration, stress, or lack of sleep. Try drinking a large glass of water and resting in a dark room. If it is the worst headache of your life, seek emergency care.";
-    }
-    if (text.includes('cough') || text.includes('cold')) {
-      return "For a standard cough, warm tea with honey can act as a natural soother. If you are experiencing shortness of breath alongside the cough, please consult your doctor.";
+    // Stage 2: Clarifying Questions
+    if (triageState.stage === 'clarifying' && triageState.category) {
+      const cat = triageState.category;
+      const currentQIndex = Object.keys(triageState.answers).length;
+      const nextAnswers = { ...triageState.answers, [currentQIndex]: text };
+      
+      if (currentQIndex < SYMPTOM_DB[cat].questions.length - 1) {
+        setTriageState({ ...triageState, answers: nextAnswers });
+        return SYMPTOM_DB[cat].questions[currentQIndex + 1];
+      } else {
+        const finalResult = SYMPTOM_DB[cat].conclusion(nextAnswers);
+        setTriageState({ stage: 'result', answers: {} }); // Reset for next time
+        return `Thank you for those details.\n\n${finalResult}\n\nWould you like to review anything else?`;
+      }
     }
 
-    // Default Fallback
-    return "Thank you for sharing. Based on those symptoms, I recommend monitoring your condition closely and logging your vitals here in the app. If you feel worse, please contact your Caregiver.";
+    return "Thank you. Please remember I am an AI; for any health concerns, always contact your doctor or caregiver.";
   };
 
   const handleSend = () => {
     if (!inputText.trim()) return;
 
-    const userMessage: Message = { id: Date.now().toString(), sender: 'user', text: inputText.trim() };
-    setMessages(prev => [...prev, userMessage]);
+    const userMsg: Message = { id: Date.now().toString(), sender: 'user', text: inputText.trim() };
+    setMessages(prev => [...prev, userMsg]);
     setInputText('');
     setIsTyping(true);
 
-    // Simulate AI thinking delay for realism
     setTimeout(() => {
-      const aiResponseText = processSymptom(userMessage.text);
-      const aiMessage: Message = { id: (Date.now() + 1).toString(), sender: 'ai', text: aiResponseText };
-      setMessages(prev => [...prev, aiMessage]);
+      const response = processResponse(userMsg.text);
+      const aiMsg: Message = { id: (Date.now() + 1).toString(), sender: 'ai', text: response };
+      setMessages(prev => [...prev, aiMsg]);
       setIsTyping(false);
-    }, 1500);
+    }, 1200);
   };
 
   useEffect(() => {
