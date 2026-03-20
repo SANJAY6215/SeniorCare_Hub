@@ -131,6 +131,11 @@ export default function AppointmentsScreen() {
 
   useEffect(() => {
     fetchAppointments();
+    // Pre-fill date with a friendly format
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(10, 0, 0, 0);
+    setDate(tomorrow.toISOString().slice(0, 16));
   }, []);
 
   const handleAdd = async () => {
@@ -242,8 +247,15 @@ export default function AppointmentsScreen() {
               <Text style={[styles.label, { color: colors.textSecondary }]}>Specialty</Text>
               <TextInput style={[styles.input, { borderColor: colors.border, color: colors.text, backgroundColor: colors.background }]} placeholder="Cardiology" placeholderTextColor={colors.textMuted} value={docSpec} onChangeText={setDocSpec} />
 
-              <Text style={[styles.label, { color: colors.textSecondary }]}>Date & Time</Text>
-              <TextInput style={[styles.input, { borderColor: colors.border, color: colors.text, backgroundColor: colors.background }]} placeholder="e.g. 2026-03-25T10:00:00" placeholderTextColor={colors.textMuted} value={date} onChangeText={setDate} />
+              <Text style={[styles.label, { color: colors.textSecondary }]}>Date & Time (YYYY-MM-DDTHH:MM)</Text>
+              <TextInput 
+                style={[styles.input, { borderColor: colors.border, color: colors.text, backgroundColor: colors.background }]} 
+                placeholder="2026-03-25T10:00" 
+                placeholderTextColor={colors.textMuted} 
+                value={date} 
+                onChangeText={setDate} 
+              />
+              <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 4 }}>Example: {new Date().toISOString().slice(0, 16)}</Text>
 
               <Text style={[styles.label, { color: colors.textSecondary }]}>Location</Text>
               <TextInput style={[styles.input, { borderColor: colors.border, color: colors.text, backgroundColor: colors.background }]} placeholder="123 Care Clinic Ave" placeholderTextColor={colors.textMuted} value={loc} onChangeText={setLoc} />

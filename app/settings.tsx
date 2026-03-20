@@ -58,7 +58,7 @@ export default function SettingsScreen() {
   const scale = useTextScale();
   const router = useRouter();
   const profile = useUserStore((s) => s.profile);
-  const { setDarkMode, setTextSize, updateProfile } = useUserStore();
+  const { setDarkMode, setTextSize, updateProfile, signOut } = useUserStore();
 
   // Medical Profile Modal State
   const [showMedModal, setShowMedModal] = useState(false);
@@ -221,12 +221,29 @@ export default function SettingsScreen() {
           </View>
         </Animated.View>
 
-        {/* ABOUT */}
-        <Animated.View entering={FadeInDown.delay(400).springify()}>
-          <Text style={[styles.sectionHeader, { color: colors.textSecondary, fontSize: 13 * scale }]}>ABOUT</Text>
+        {/* ACCOUNT */}
+        <Animated.View entering={FadeInDown.delay(500).springify()}>
+          <Text style={[styles.sectionHeader, { color: colors.textSecondary, fontSize: 13 * scale }]}>ACCOUNT</Text>
           <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <SettingRow icon="help-circle" iconColor={colors.textSecondary} label="Help Center" onPress={() => {}} />
-            <SettingRow icon="information-circle" isLast iconColor={colors.textSecondary} label="App Version" subtitle="1.0.0 (Premium)" />
+            <TouchableOpacity 
+              onPress={() => {
+                Alert.alert('Sign Out', 'Are you sure you want to log out?', [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Log Out', style: 'destructive', onPress: signOut }
+                ]);
+              }}
+              style={styles.settingTouchable}
+            >
+              <View style={styles.settingRow}>
+                <View style={[styles.settingIcon, { backgroundColor: colors.danger + '15' }]}>
+                  <Ionicons name="log-out" size={20} color={colors.danger} />
+                </View>
+                <View style={styles.settingText}>
+                  <Text style={[styles.settingLabel, { color: colors.danger, fontSize: 16 * scale }]}>Sign Out</Text>
+                  <Text style={[styles.settingSub, { color: colors.textSecondary, fontSize: 12 * scale }]}>Securely log out of your account</Text>
+                </View>
+              </View>
+            </TouchableOpacity>
           </View>
         </Animated.View>
 
