@@ -92,16 +92,24 @@ export default function SOSButton({ emergencyContacts }: SOSButtonProps) {
     const primary = emergencyContacts.find((c) => c.isPrimary);
     
     let locationLink = '';
-    if (Platform.OS !== 'web') {
+    try {
+      // Try to get permissions first
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status === 'granted') {
-        try {
-          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-          locationLink = `\n\n📌 My Live Location: https://maps.google.com/?q=${loc.coords.latitude},${loc.coords.longitude}`;
-        } catch (e) {
-          console.log('Could not fetch GPS fast enough.', e);
+        // Get last known position quickly for immediate SOS sending
+        const lastLoc = await Location.getLastKnownPositionAsync();
+        if (lastLoc) {
+          locationLink = `\n\n📌 My Last Known Location: https://maps.google.com/?q=${lastLoc.coords.latitude},${lastLoc.coords.longitude}`;
         }
+
+        // Try to get fresh high-accuracy position in background
+        const loc = await Location.getCurrentPositionAsync({ 
+          accuracy: Location.Accuracy.High,
+        });
+        locationLink = `\n\n📌 My Live Location: https://maps.google.com/?q=${loc.coords.latitude},${loc.coords.longitude}`;
       }
+    } catch (e) {
+      console.log('Location fetch failed or timed out.', e);
     }
     
     if (primary) {

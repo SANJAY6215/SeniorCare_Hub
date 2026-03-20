@@ -13,6 +13,7 @@ import {
   Platform,
   KeyboardAvoidingView,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { 
@@ -24,15 +25,12 @@ import Animated, {
 import { useTheme } from '@/hooks/useTheme';
 import { useTextScale } from '@/hooks/useTheme';
 import { useUserStore } from '@/stores/userStore';
+import { useMessageStore } from '@/stores/messageStore';
 import { Spacing, Radius } from '@/constants/Typography';
 import { Colors } from '@/constants/Colors';
 import ChatInterface from '@/components/family/ChatInterface';
 
-const mockMessages = [
-  { id: 'm1', from: 'Sarah Johnson', relation: 'Daughter', text: 'Hi Mom! Did you take your morning pills? 💊', time: '9:15 AM', read: true, avatar: '👩' },
-  { id: 'm2', from: 'Tom Johnson', relation: 'Son', text: 'Love you! See you Sunday for dinner 🍕', time: 'Yesterday', read: true, avatar: '👨' },
-  { id: 'm3', from: 'Dr. Mary Chen', relation: 'Doctor', text: 'Your BP readings look great this week! Keep it up.', time: 'Mon', read: false, avatar: '👩‍⚕️' },
-];
+  // Mock messages removed, using real-time store
 
 const quickReplies = ['Yes ✅', 'No ❌', 'Call me 📞', 'Love you ❤️', 'Feeling good 😊'];
 
@@ -40,6 +38,8 @@ export default function FamilyScreen() {
   const { colors, isDark } = useTheme();
   const scale = useTextScale();
   const { profile, updateProfile } = useUserStore();
+  const router = useRouter();
+  const { messages, sendMessage } = useMessageStore();
 
   const [showAddContact, setShowAddContact] = useState(false);
   const [newName, setNewName] = useState('');
@@ -77,21 +77,34 @@ export default function FamilyScreen() {
   };
 
   const handleCall = (contact: any) => {
-    if (contact.phone) {
-      Linking.openURL(`tel:${contact.phone}`).catch(() => 
-        Alert.alert('Calling', `Calling ${contact.name}...`)
+    if (!contact.phone) {
+      Alert.alert('No Number', `${contact.name} has no phone number saved.`);
+      return;
+    }
+    if (Platform.OS === 'web') {
+      // Web browsers block tel: on most new-tab flows. Show the number prominently instead.
+      Alert.alert(
+        `📞 Call ${contact.name}`,
+        `Phone Number:\n${contact.phone}\n\nDial this number from your mobile device or use the phone icon.`,
+        [
+          { text: 'Close', style: 'cancel' },
+          { text: 'Try to Call Anyway', onPress: () => Linking.openURL(`tel:${contact.phone}`) },
+        ]
       );
     } else {
-      Alert.alert('Calling', `Calling ${contact.name}...`);
+      Linking.openURL(`tel:${contact.phone}`).catch(() =>
+        Alert.alert('Error', 'Could not open the phone dialer.')
+      );
     }
   };
 
   const handleMessage = (msg: any) => {
-    Alert.alert(`Message from ${msg.from}`, msg.text, [
+    Alert.alert(`Message from ${msg.sender_name}`, msg.content, [
       { text: 'Close' },
-      { text: 'Reply', onPress: () => Alert.alert('Reply', 'Voice or text reply coming soon!') },
     ]);
   };
+
+  const recentMessages = messages.slice(-3).reverse();
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
@@ -103,6 +116,24 @@ export default function FamilyScreen() {
             Stay connected with your loved ones
           </Text>
         </Animated.View>
+
+        {/* Invite Code Section for Seniors */}
+        {profile.role === 'senior' && profile.familyCode && (
+          <Animated.View entering={FadeInDown.delay(50).springify()} style={[styles.inviteCard, { backgroundColor: colors.primaryGradient[0] }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <View>
+                <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 13, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1 }}>Your Invite Code</Text>
+                <Text style={{ color: '#FFF', fontSize: 32, fontWeight: '900', letterSpacing: 4, marginTop: 4 }}>{profile.familyCode}</Text>
+              </View>
+              <View style={{ backgroundColor: 'rgba(255,255,255,0.2)', padding: 12, borderRadius: 16 }}>
+                <Ionicons name="key-outline" size={28} color="#FFF" />
+              </View>
+            </View>
+            <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 14, marginTop: 12 }}>
+              Share this 6-digit private code with your Caregivers so they can link to your live health data.
+            </Text>
+          </Animated.View>
+        )}
 
         {/* Quick Call Section */}
         <View style={styles.sectionHeaderLine}>
@@ -167,38 +198,47 @@ export default function FamilyScreen() {
           <Text style={[styles.sectionTitle, { color: colors.text, fontSize: 18 * scale }]}>Recent Messages</Text>
         </View>
 
-        {mockMessages.map((msg, i) => (
-          <Animated.View 
-            key={msg.id} 
-            entering={FadeInRight.delay(400 + i * 100).springify()}
-          >
-            <TouchableOpacity
-              onPress={() => handleMessage(msg)}
-              style={[
-                styles.msgCard,
-                {
-                  backgroundColor: colors.surface,
-                  borderColor: msg.read ? colors.border : colors.primary,
-                },
-              ]}
+        {recentMessages.length === 0 && (
+          <Text style={{ color: colors.textMuted, textAlign: 'center', marginTop: Spacing.md }}>No recent messages.</Text>
+        )}
+        {recentMessages.map((msg, i) => {
+          const isMyMessage = msg.sender_id === profile.id;
+          const timeString = new Date(msg.created_at).toLocaleDateString() === new Date().toLocaleDateString() 
+            ? new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            : new Date(msg.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' });
+            
+          return (
+            <Animated.View 
+              key={msg.id} 
+              entering={FadeInRight.delay(100 + i * 100).springify()}
             >
-              <View style={styles.msgAvatarWrapper}>
-                <Text style={styles.msgAvatarText}>{msg.avatar}</Text>
-                {!msg.read && <View style={[styles.unreadBadge, { backgroundColor: colors.primary }]} />}
-              </View>
-              
-              <View style={styles.msgContent}>
-                <View style={styles.msgHeader}>
-                  <Text style={[styles.msgFrom, { color: colors.text, fontSize: 16 * scale }]}>{msg.from}</Text>
-                  <Text style={[styles.msgTime, { color: colors.textMuted, fontSize: 12 * scale }]}>{msg.time}</Text>
+              <TouchableOpacity
+                onPress={() => handleMessage(msg)}
+                style={[
+                  styles.msgCard,
+                  {
+                    backgroundColor: colors.surface,
+                    borderColor: colors.border,
+                  },
+                ]}
+              >
+                <View style={styles.msgAvatarWrapper}>
+                  <Text style={styles.msgAvatarText}>{isMyMessage ? '👤' : '👩'}</Text>
                 </View>
-                <Text style={[styles.msgText, { color: colors.textSecondary, fontSize: 14 * scale }]} numberOfLines={1}>
-                  {msg.text}
-                </Text>
-              </View>
-            </TouchableOpacity>
-          </Animated.View>
-        ))}
+                
+                <View style={styles.msgContent}>
+                  <View style={styles.msgHeader}>
+                    <Text style={[styles.msgFrom, { color: colors.text, fontSize: 16 * scale }]}>{msg.sender_name}</Text>
+                    <Text style={[styles.msgTime, { color: colors.textMuted, fontSize: 12 * scale }]}>{timeString}</Text>
+                  </View>
+                  <Text style={[styles.msgText, { color: colors.textSecondary, fontSize: 14 * scale }]} numberOfLines={1}>
+                    {msg.content}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </Animated.View>
+          );
+        })}
 
         {/* Quick Replies */}
         <View style={styles.repliesRow}>
@@ -206,7 +246,7 @@ export default function FamilyScreen() {
             {quickReplies.map((reply, i) => (
               <TouchableOpacity
                 key={i}
-                onPress={() => Alert.alert('Reply Sent', `"${reply}" sent`)}
+                onPress={() => sendMessage(reply)}
                 style={[styles.replyChip, { backgroundColor: colors.background, borderColor: colors.border }]}
               >
                 <Text style={[styles.replyText, { color: colors.text, fontSize: 14 * scale }]}>{reply}</Text>
@@ -230,7 +270,7 @@ export default function FamilyScreen() {
             <Text style={styles.videoSub}>Start a face-to-face conversation</Text>
           </View>
           <TouchableOpacity
-            onPress={() => Alert.alert('Video Call', 'Starting call...')}
+            onPress={() => router.push('/video-call')}
             style={styles.videoStartBtn}
           >
             <Text style={styles.videoBtnText}>Start</Text>
@@ -279,8 +319,19 @@ export default function FamilyScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  content: { padding: Spacing.lg },
-  header: { marginBottom: Spacing.xl, marginTop: Spacing.md },
+  content: { paddingBottom: 100 },
+  header: { padding: Spacing.xl, paddingTop: Spacing.xxl + 20 },
+  inviteCard: {
+    marginHorizontal: Spacing.lg,
+    marginBottom: Spacing.xl,
+    padding: Spacing.xl,
+    borderRadius: Radius.xl,
+    elevation: 8,
+    shadowColor: '#6366F1',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 15,
+  },
   title: { fontWeight: '800', letterSpacing: -1 },
   subtitle: { fontWeight: '600', opacity: 0.6 },
   sectionHeader: { marginBottom: Spacing.md },

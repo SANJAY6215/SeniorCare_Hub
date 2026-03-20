@@ -49,6 +49,7 @@ interface MedicationStore {
   getTodayDoses: () => DoseLog[];
   getAdherencePercent: (days?: number) => number;
   getWeeklyAdherence: () => number[];
+  getStreak: () => number;
   scheduleNotifications: () => Promise<void>;
 }
 
@@ -78,14 +79,49 @@ export const useMedicationStore = create<MedicationStore>((set, get) => ({
 
     if (meds) set({ medications: meds as Medication[] });
     
-    const today = new Date().toISOString().split('T')[0];
+    // Fetch logs for the last 7 days for the history view
+    const today = new Date();
+    const sevenDaysAgo = new Date(today);
+    sevenDaysAgo.setDate(today.getDate() - 7);
+    const sevenDaysAgoStr = sevenDaysAgo.toISOString().split('T')[0];
+
     const { data: logs } = await supabase
       .from('dose_logs')
       .select('*')
       .eq('user_id', targetUserId)
-      .eq('date', today);
+      .gte('date', sevenDaysAgoStr);
     
     if (logs) set({ doseLogs: logs as DoseLog[] });
+
+    // Auto-generate logs for today if they don't exist
+    const todayStr = today.toISOString().split('T')[0];
+    const todayLogs = (logs || []).filter(l => l.date === todayStr);
+    const medsList = meds || [];
+    
+    if (medsList.length > 0) {
+      const missingMeds = medsList.filter(m => !todayLogs.some(l => l.medication_id === m.id));
+      if (missingMeds.length > 0) {
+        const newLogs = [];
+        for (const med of missingMeds) {
+          for (const time of med.times) {
+            newLogs.push({
+              user_id: targetUserId,
+              medication_id: med.id,
+              scheduled_time: time,
+              status: 'pending',
+              date: todayStr,
+            });
+          }
+        }
+        if (newLogs.length > 0) {
+          const { data: createdLogs } = await supabase.from('dose_logs').insert(newLogs).select();
+          if (createdLogs) {
+            set((state) => ({ doseLogs: [...state.doseLogs, ...(createdLogs as DoseLog[])] }));
+          }
+        }
+      }
+    }
+
     set({ loading: false });
     get().scheduleNotifications();
   },
@@ -96,14 +132,30 @@ export const useMedicationStore = create<MedicationStore>((set, get) => ({
     const targetUserId = profile.role === 'senior' ? profile.id : profile.linkedSeniorId;
     if (!targetUserId) return;
 
-    const { data, error } = await supabase
+    const { data: createdMed, error } = await supabase
       .from('medications')
       .insert([{ ...med, user_id: targetUserId }])
       .select()
       .single();
 
-    if (data) {
-      set((state) => ({ medications: [...state.medications, data as Medication] }));
+    if (createdMed) {
+      set((state) => ({ medications: [...state.medications, createdMed as Medication] }));
+      
+      // Generate today's logs for this new medication immediately
+      const todayStr = new Date().toISOString().split('T')[0];
+      const newLogs = createdMed.times.map((time: string) => ({
+        user_id: targetUserId,
+        medication_id: (createdMed as Medication).id,
+        scheduled_time: time,
+        status: 'pending',
+        date: todayStr,
+      }));
+
+      const { data: doseLogs } = await supabase.from('dose_logs').insert(newLogs).select();
+      if (doseLogs) {
+        set((state) => ({ doseLogs: [...state.doseLogs, ...(doseLogs as DoseLog[])] }));
+      }
+      
       get().scheduleNotifications();
     }
   },
@@ -190,7 +242,44 @@ export const useMedicationStore = create<MedicationStore>((set, get) => ({
   },
 
   getWeeklyAdherence: () => {
-    return [85, 100, 75, 100, 100, 85, 92];
+    const logs = get().doseLogs;
+    const history: number[] = [];
+    const today = new Date();
+    
+    // Calculate for today and the previous 6 days
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(today.getDate() - i);
+      const dateStr = d.toISOString().split('T')[0];
+      
+      const dayLogs = logs.filter((l) => l.date === dateStr);
+      if (dayLogs.length === 0) {
+        history.push(0);
+      } else {
+        const taken = dayLogs.filter((l) => l.status === 'taken').length;
+        history.push(Math.round((taken / dayLogs.length) * 100));
+      }
+    }
+    return history;
+  },
+
+  getStreak: () => {
+    const logs = get().doseLogs;
+    if (!logs.length) return 0;
+    let streak = 0;
+    const today = new Date();
+    // Check backward from today up to 90 days
+    for (let i = 0; i < 90; i++) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      const dateStr = d.toISOString().split('T')[0];
+      const dayLogs = logs.filter((l) => l.date === dateStr);
+      if (!dayLogs.length) { if (i === 0) continue; break; } // no data today yet = don't break
+      const allTaken = dayLogs.every((l) => l.status === 'taken');
+      if (allTaken) streak++;
+      else break;
+    }
+    return streak;
   },
 
   scheduleNotifications: async () => {

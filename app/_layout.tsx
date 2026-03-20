@@ -1,8 +1,12 @@
 import React, { useEffect } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { View, ActivityIndicator, Platform } from 'react-native';
+import { View, ActivityIndicator, Platform, LogBox } from 'react-native';
 import * as Notifications from 'expo-notifications';
+
+// Suppress repetitive web-only warnings in the development overlay
+LogBox.ignoreLogs(['onStartShouldSetResponder', 'Unknown event handler property']);
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useUserStore } from '@/stores/userStore';
 
 Notifications.setNotificationHandler({
@@ -12,6 +16,29 @@ Notifications.setNotificationHandler({
     shouldSetBadge: true,
   }),
 });
+
+// Suppress specific harmless web warnings that trigger the LogBox overlay
+if (Platform.OS === 'web') {
+  // Use both console.error and console.warn suppression
+  const originalError = console.error;
+  const originalWarn = console.warn;
+  
+  const filter = (...args: any[]) => {
+    const msg = args.join(' ');
+    if (msg.includes('onStartShouldSetResponder')) return true;
+    if (msg.includes('Unknown event handler property')) return true;
+    return false;
+  };
+
+  console.error = (...args: any[]) => {
+    if (filter(...args)) return;
+    originalError(...args);
+  };
+  console.warn = (...args: any[]) => {
+    if (filter(...args)) return;
+    originalWarn(...args);
+  };
+}
 
 export default function RootLayout() {
   const { profile, session, loading, initialize } = useUserStore();
@@ -48,15 +75,23 @@ export default function RootLayout() {
   useEffect(() => {
     if (loading) return;
 
-    const isLoginPage = segments[0] === 'login';
+    const checkOnboarding = async () => {
+      const seen = await AsyncStorage.getItem('onboarding_complete');
+      const isLoginPage = segments[0] === 'login';
+      const isOnboardingPage = segments[0] === 'onboarding';
 
-    if (!session && !isLoginPage) {
-      // Redirect to the login page if not logged in
-      router.replace('/login');
-    } else if (session && isLoginPage) {
-      // Redirect away from login if logged in
-      router.replace('/(tabs)');
-    }
+      if (!seen && !isOnboardingPage) {
+        // 1. MUST do onboarding first, regardless of session
+        router.replace('/onboarding');
+      } else if (!session && !isLoginPage && !isOnboardingPage && seen) {
+        // 2. If onboarding seen but no session, go to login
+        router.replace('/login');
+      } else if (session && seen && (isLoginPage || isOnboardingPage)) {
+        // 3. Only go to tabs if logged in AND onboarding seen
+        router.replace('/(tabs)');
+      }
+    };
+    checkOnboarding();
   }, [session, loading, segments]);
 
 
@@ -74,6 +109,7 @@ export default function RootLayout() {
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="login" options={{ headerShown: false }} />
+        <Stack.Screen name="onboarding" options={{ headerShown: false, animation: 'fade' }} />
         <Stack.Screen
           name="modal/medication-reminder"
           options={{

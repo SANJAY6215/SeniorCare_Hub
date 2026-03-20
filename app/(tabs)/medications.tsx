@@ -8,6 +8,9 @@ import {
   TouchableOpacity,
   Alert,
   Platform,
+  Modal,
+  TextInput,
+  KeyboardAvoidingView,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
@@ -123,12 +126,56 @@ function MedCard({ med, doses, index }: { med: Medication; doses: DoseLog[]; ind
 export default function MedicationsScreen() {
   const { colors, isDark } = useTheme();
   const scale = useTextScale();
-  const { medications, getTodayDoses, getAdherencePercent, fetchMedications } = useMedicationStore();
+  const { medications, getTodayDoses, getAdherencePercent, fetchMedications, addMedication } = useMedicationStore();
   const { session } = useUserStore();
+
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [newMedName, setNewMedName] = useState('');
+  const [newMedDosage, setNewMedDosage] = useState('');
+  const [newMedFreq, setNewMedFreq] = useState('');
+  const [newMedTime, setNewMedTime] = useState('');
+  const [newMedReason, setNewMedReason] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const weeklyAdherence = useMedicationStore().getWeeklyAdherence();
 
   useEffect(() => {
     if (session) fetchMedications();
   }, [session]);
+
+  const handleAddMedication = async () => {
+    setFormError(null);
+    if (!newMedName || !newMedDosage || !newMedTime) {
+      setFormError('Please fill in Name, Dosage, and Time');
+      return;
+    }
+
+    const timesArray = newMedTime.split(',').map(t => t.trim()).filter(Boolean);
+    const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+    
+    if (!timesArray.every(t => timeRegex.test(t))) {
+      setFormError('Use 24h format like 08:00 or 20:30');
+      return;
+    }
+
+    try {
+      await addMedication({
+        name: newMedName,
+        dosage: newMedDosage,
+        frequency: newMedFreq || 'Daily',
+        times: timesArray,
+        reason: newMedReason || 'Routine',
+        color: ['#F43F5E', '#8B5CF6', '#10B981', '#F59E0B', '#3B82F6'][Math.floor(Math.random() * 5)],
+      });
+
+      setShowAddModal(false);
+      setNewMedName(''); setNewMedDosage(''); setNewMedFreq(''); setNewMedTime(''); setNewMedReason('');
+      setFormError(null);
+    } catch (e: any) {
+      setFormError(e.message || 'Failed to save medication');
+    }
+  };
 
   const todayDoses = getTodayDoses();
   const adherence = getAdherencePercent();
@@ -143,11 +190,11 @@ export default function MedicationsScreen() {
           <View>
             <Text style={[styles.title, { color: colors.text, fontSize: 32 * scale }]}>Medications</Text>
             <Text style={[styles.subtitle, { color: colors.textSecondary, fontSize: 15 * scale }]}>
-              Tracking {medications.length} active prescriptions
+              {useUserStore.getState().profile?.role === 'caregiver' ? "Tracking senior's prescriptions" : `Tracking ${medications.length} active prescriptions`}
             </Text>
           </View>
           <TouchableOpacity
-            onPress={() => Alert.alert('Add Medication', 'Feature coming soon')}
+            onPress={() => setShowAddModal(true)}
             style={[styles.addBtn, { backgroundColor: colors.primary }]}
           >
             <Ionicons name="add" size={24} color="#FFF" />
@@ -196,7 +243,7 @@ export default function MedicationsScreen() {
           <Text style={[styles.sectionTitle, { color: colors.text, fontSize: 18 * scale }]}>
             Current List
           </Text>
-          <TouchableOpacity>
+          <TouchableOpacity onPress={() => setShowHistoryModal(true)}>
             <Text style={[styles.viewHistory, { color: colors.primary }]}>History</Text>
           </TouchableOpacity>
         </View>
@@ -207,6 +254,81 @@ export default function MedicationsScreen() {
         
         <View style={{ height: 100 }} />
       </ScrollView>
+
+      {/* Add Medication Modal */}
+      <Modal visible={showAddModal} transparent animationType="slide">
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalBg}>
+          <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
+             <View style={styles.modalHeader}>
+              <View>
+                <Text style={[styles.modalTitle, { color: colors.text }]}>Add Medication</Text>
+                {useUserStore.getState().profile?.role === 'caregiver' && (
+                  <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '700' }}>CREATING FOR SENIOR</Text>
+                )}
+              </View>
+              <TouchableOpacity onPress={() => setShowAddModal(false)}>
+                <Ionicons name="close" size={24} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {formError && (
+                <View style={{ backgroundColor: colors.danger + '15', padding: 12, borderRadius: 8, marginBottom: 12 }}>
+                  <Text style={{ color: colors.danger, fontWeight: '700', textAlign: 'center' }}>{formError}</Text>
+                </View>
+              )}
+              <Text style={[styles.label, { color: colors.textSecondary }]}>Medication Name</Text>
+              <TextInput style={[styles.input, { borderColor: colors.border, color: colors.text }]} placeholder="e.g. Lisinopril" placeholderTextColor={colors.textMuted} value={newMedName} onChangeText={setNewMedName} />
+
+              <Text style={[styles.label, { color: colors.textSecondary }]}>Dosage</Text>
+              <TextInput style={[styles.input, { borderColor: colors.border, color: colors.text }]} placeholder="e.g. 10mg" placeholderTextColor={colors.textMuted} value={newMedDosage} onChangeText={setNewMedDosage} />
+
+               <Text style={[styles.label, { color: colors.textSecondary }]}>Times (comma separated)</Text>
+              <TextInput style={[styles.input, { borderColor: colors.border, color: colors.text }]} placeholder="e.g. 08:00, 20:00" placeholderTextColor={colors.textMuted} value={newMedTime} onChangeText={setNewMedTime} />
+
+              <Text style={[styles.label, { color: colors.textSecondary }]}>Frequency</Text>
+              <TextInput style={[styles.input, { borderColor: colors.border, color: colors.text }]} placeholder="e.g. Daily with food" placeholderTextColor={colors.textMuted} value={newMedFreq} onChangeText={setNewMedFreq} />
+
+              <Text style={[styles.label, { color: colors.textSecondary }]}>Reason (Optional)</Text>
+              <TextInput style={[styles.input, { borderColor: colors.border, color: colors.text }]} placeholder="e.g. For Blood Pressure" placeholderTextColor={colors.textMuted} value={newMedReason} onChangeText={setNewMedReason} />
+
+              <TouchableOpacity onPress={handleAddMedication} style={[styles.saveBtn, { backgroundColor: colors.primary }]}>
+                <Text style={styles.saveBtnText}>Save Medication</Text>
+              </TouchableOpacity>
+              <View style={{height: 40}} />
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* History Modal */}
+      <Modal visible={showHistoryModal} transparent animationType="slide">
+        <View style={styles.modalBg}>
+          <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
+             <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Weekly History</Text>
+              <TouchableOpacity onPress={() => setShowHistoryModal(false)}>
+                <Ionicons name="close" size={24} color={colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {weeklyAdherence.map((pct, i) => (
+                <View key={i} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16 }}>
+                  <Text style={{ width: 90, color: colors.textSecondary, fontWeight: '600', fontSize: 14 * scale }}>
+                    {new Date(Date.now() - (6 - i) * 86400000).toLocaleDateString([], {weekday: 'short', month: 'short', day: 'numeric'})}
+                  </Text>
+                  <View style={{ flex: 1, height: 16, backgroundColor: colors.border, borderRadius: 8, marginHorizontal: 16, overflow: 'hidden' }}>
+                    <View style={{ width: `${pct}%`, height: '100%', backgroundColor: pct >= 80 ? colors.success : colors.warning }} />
+                  </View>
+                  <Text style={{ width: 45, textAlign: 'right', fontWeight: '800', color: colors.text, fontSize: 15 * scale }}>
+                    {pct}%
+                  </Text>
+                </View>
+              ))}
+              <View style={{height: 40}} />
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -250,4 +372,12 @@ const styles = StyleSheet.create({
   doseTime: { fontWeight: '700' },
   refillBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: Radius.sm, marginTop: Spacing.md, alignSelf: 'flex-start' },
   refill: { fontWeight: '700' },
+  modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalContent: { borderTopLeftRadius: Radius.xl, borderTopRightRadius: Radius.xl, padding: Spacing.xl, elevation: 10, maxHeight: '80%' },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.xl },
+  modalTitle: { fontSize: 20, fontWeight: '800' },
+  label: { fontSize: 14, fontWeight: '600', marginBottom: 6, marginTop: Spacing.md },
+  input: { minHeight: 50, borderWidth: 1, borderRadius: Radius.lg, paddingHorizontal: 16, fontWeight: '500', paddingVertical: 10 },
+  saveBtn: { height: 50, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', marginTop: Spacing.xl },
+  saveBtnText: { color: '#FFF', fontSize: 16, fontWeight: '700', letterSpacing: 0.5 },
 });

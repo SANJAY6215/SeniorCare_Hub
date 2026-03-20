@@ -12,113 +12,47 @@ import {
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
-import { useTheme } from '@/hooks/useTheme';
-import { useTextScale } from '@/hooks/useTheme';
+import { useTheme, useTextScale } from '@/hooks/useTheme';
 import { Spacing, Radius } from '@/constants/Typography';
-import Animated, { FadeInUp, FadeInDown } from 'react-native-reanimated';
-import { supabase } from '@/lib/supabase';
+import Animated, { FadeInUp } from 'react-native-reanimated';
 import { useUserStore } from '@/stores/userStore';
-
-interface Message {
-  id: string;
-  sender_id: string;
-  sender_name: string;
-  text: string;
-  timestamp: string;
-  isMe?: boolean; // We will compute this dynamically
-}
+import { useMessageStore } from '@/stores/messageStore';
 
 export default function ChatInterface() {
   const { colors } = useTheme();
   const scale = useTextScale();
   const profile = useUserStore((s) => s.profile);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const { messages, fetchMessages, subscribeToMessages, unsubscribeFromMessages, sendMessage } = useMessageStore();
   const [inputText, setInputText] = useState('');
   const scrollViewRef = useRef<ScrollView>(null);
 
   useEffect(() => {
     fetchMessages();
-    
-    const familyId = profile?.role === 'senior' ? profile?.id : profile?.linkedSeniorId;
-    if (!familyId) return;
-
-    // Subscribe to realtime inserts on messages table, filtered to THIS family only
-    const channel = supabase
-      .channel(`room_${familyId}`)
-      .on(
-        'postgres_changes',
-        { 
-          event: 'INSERT', 
-          schema: 'public', 
-          table: 'messages',
-          filter: `family_id=eq.${familyId}`
-        },
-        (payload) => {
-          const newMsg = payload.new as Message;
-          setMessages((prev) => {
-            if (prev.find(m => m.id === newMsg.id)) return prev;
-            return [...prev, newMsg];
-          });
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [profile?.id, profile?.linkedSeniorId, profile?.role]);
-
-  const fetchMessages = async () => {
-    if (!profile) return;
-    const familyId = profile.role === 'senior' ? profile.id : profile.linkedSeniorId;
-
-    if (!familyId) return;
-
-    const { data } = await supabase
-      .from('messages')
-      .select('*')
-      .eq('family_id', familyId)
-      .order('created_at', { ascending: true });
-    
-    if (data) setMessages(data as Message[]);
-  };
+    subscribeToMessages();
+    return () => unsubscribeFromMessages();
+  }, []);
 
   const handleSend = async () => {
     if (!inputText.trim() || !profile) return;
     
-    const familyId = profile.role === 'senior' ? profile.id : profile.linkedSeniorId;
-    if (!familyId) {
-      Alert.alert('Error', 'Family connection not found.');
-      return;
-    }
-
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
     const text = inputText.trim();
     setInputText('');
 
-    const msg = {
-      family_id: familyId,
-      sender_id: profile.id,
-      sender_name: profile.firstName || (profile.role === 'senior' ? 'Senior' : 'Caregiver'),
-      text: text,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    };
-
-    const { error } = await supabase.from('messages').insert([msg]);
-    if (error) {
-      console.error('Error sending message:', error);
-      Alert.alert('Error', 'Could not send message. Please try again.');
-    } else {
-      // Force an immediate re-fetch to ensure the UI updates instantly 
-      // even if WebSockets are taking a moment to round-trip.
-      fetchMessages();
+    try {
+      await sendMessage(text);
+    } catch (error: any) {
+      console.error(error);
     }
   };
 
   useEffect(() => {
-    scrollViewRef.current?.scrollToEnd({ animated: true });
+    // Small delay ensures ScrollView has updated its content size before scrolling
+    setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 100);
   }, [messages]);
 
   return (
@@ -127,7 +61,7 @@ export default function ChatInterface() {
         <Text style={[styles.headerTitle, { color: colors.text, fontSize: 16 * scale }]}>Care Team Chat</Text>
         <View style={styles.onlineBadge}>
           <View style={[styles.onlineDot, { backgroundColor: colors.success }]} />
-          <Text style={[styles.onlineText, { color: colors.textSecondary }]}>3 Online</Text>
+          <Text style={[styles.onlineText, { color: colors.textSecondary }]}>Online</Text>
         </View>
       </View>
 
@@ -139,18 +73,19 @@ export default function ChatInterface() {
       >
         {messages.map((msg, i) => {
           const isMyMessage = msg.sender_id === profile?.id;
+          const timeString = new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
           return (
             <Animated.View 
               key={msg.id}
-              entering={FadeInUp.delay(i * 50)}
+              entering={FadeInUp.delay(0)}
               style={[
                 styles.messageBubble,
                 isMyMessage ? [styles.myMessage, { backgroundColor: colors.primary }] : [styles.otherMessage, { backgroundColor: colors.background, borderColor: colors.border }]
               ]}
             >
               {!isMyMessage && <Text style={[styles.senderName, { color: colors.primary }]}>{msg.sender_name}</Text>}
-              <Text style={[styles.messageText, { color: isMyMessage ? '#FFF' : colors.text, fontSize: 15 * scale }]}>{msg.text}</Text>
-              <Text style={[styles.timestamp, { color: isMyMessage ? 'rgba(255,255,255,0.7)' : colors.textMuted }]}>{msg.timestamp}</Text>
+              <Text style={[styles.messageText, { color: isMyMessage ? '#FFF' : colors.text, fontSize: 15 * scale }]}>{msg.content}</Text>
+              <Text style={[styles.timestamp, { color: isMyMessage ? 'rgba(255,255,255,0.7)' : colors.textMuted }]}>{timeString}</Text>
             </Animated.View>
           );
         })}

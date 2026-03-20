@@ -17,17 +17,21 @@ import { supabase } from '@/lib/supabase';
 import { Colors } from '@/constants/Colors';
 
 export default function LoginScreen() {
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [isSignUp, setIsSignUp] = useState(false);
   const [role, setRole] = useState<'senior' | 'caregiver'>('senior');
   const [familyCode, setFamilyCode] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
   const router = useRouter();
 
   const handleAuth = async () => {
+    setErrorMsg('');
     if (!email || !password) {
-      Alert.alert('Error', 'Please enter both email and password.');
+      setErrorMsg('Please enter both email and password.');
       return;
     }
 
@@ -58,7 +62,12 @@ export default function LoginScreen() {
           email, 
           password,
           options: {
-            data: { role, linked_senior_id }
+            data: { 
+              role, 
+              linked_senior_id,
+              first_name: firstName.trim(),
+              last_name: lastName.trim()
+            }
           }
         });
         if (error) throw error;
@@ -69,14 +78,20 @@ export default function LoginScreen() {
           throw new Error('An account with this email already exists. Please sign in instead.');
         }
 
-        Alert.alert('Success', 'Account successfully created!');
+        setErrorMsg('Account successfully created! Please sign in.');
+        setIsSignUp(false);
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
+        if (error) {
+          if (error.message.includes('Invalid login credentials')) {
+            throw new Error('Invalid email or password. If you are a new user, please switch to Sign Up to create an account!');
+          }
+          throw error;
+        }
         router.replace('/(tabs)');
       }
     } catch (error: any) {
-      Alert.alert('Authentication Error', error.message);
+      setErrorMsg(error.message);
     } finally {
       setLoading(false);
     }
@@ -101,6 +116,28 @@ export default function LoginScreen() {
           </View>
 
           <View style={styles.form}>
+            {isSignUp && (
+              <View style={styles.row}>
+                <View style={[styles.inputContainer, { flex: 1 }]}>
+                  <Ionicons name="person-outline" size={20} color="#64748B" style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.input}
+                    placeholder="First"
+                    value={firstName}
+                    onChangeText={setFirstName}
+                  />
+                </View>
+                <View style={[styles.inputContainer, { flex: 1, marginLeft: 12 }]}>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Last"
+                    value={lastName}
+                    onChangeText={setLastName}
+                  />
+                </View>
+              </View>
+            )}
+
             <View style={styles.inputContainer}>
               <Ionicons name="mail-outline" size={24} color="#64748B" style={styles.inputIcon} />
               <TextInput
@@ -153,6 +190,12 @@ export default function LoginScreen() {
                 />
               </View>
             )}
+
+            {errorMsg ? (
+              <Text style={{ color: '#EF4444', textAlign: 'center', fontWeight: '600', paddingHorizontal: 10 }}>
+                {errorMsg}
+              </Text>
+            ) : null}
 
             <TouchableOpacity
               style={[styles.button, loading && styles.buttonDisabled]}
@@ -297,5 +340,9 @@ const styles = StyleSheet.create({
   },
   roleTextActive: {
     color: '#22C55E',
+  },
+  row: {
+    flexDirection: 'row',
+    gap: 12,
   },
 });

@@ -10,7 +10,9 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Modal,
 } from 'react-native';
+import { Pedometer } from 'expo-sensors';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -25,6 +27,8 @@ import { useTextScale } from '@/hooks/useTheme';
 import { useUserStore } from '@/stores/userStore';
 import { useVitalsStore, VitalReading } from '@/stores/vitalsStore';
 import VitalTrendChart from '@/components/health/VitalTrendChart';
+import AISymptomChecker from '@/components/health/AISymptomChecker';
+import VoiceRecognitionSheet from '@/components/health/VoiceRecognitionSheet';
 import { Colors } from '@/constants/Colors';
 import { Spacing, Radius } from '@/constants/Typography';
 
@@ -38,19 +42,64 @@ const vitalConfig: Record<VitalType, { label: string; unit: string; icon: keyof 
   spo2: { label: 'Oxygen Level', unit: '%', icon: 'cloud', color: '#06B6D4', placeholder: '98', normal: '> 95%' },
 };
 
+const calculateStatus = (type: VitalType, value: string): string => {
+  const num = parseFloat(value);
+  if (isNaN(num) && type !== 'bp') return 'UNKNOWN';
+
+  switch (type) {
+    case 'bp': {
+      const parts = value.split('/');
+      if (parts.length === 1) {
+        // If they enter a single number, assume systolic for basic triage
+        const sys = parseInt(parts[0]);
+        if (isNaN(sys)) return 'UNKNOWN';
+        if (sys >= 140) return 'HIGH';
+        if (sys < 90) return 'LOW';
+        return 'NORMAL';
+      }
+      if (parts.length !== 2) return 'UNKNOWN';
+      const sys = parseInt(parts[0]);
+      const dia = parseInt(parts[1]);
+      if (isNaN(sys) || isNaN(dia)) return 'UNKNOWN';
+      if (sys < 90 || dia < 60) return 'LOW';
+      if (sys > 180 || dia > 120) return 'CRITICAL';
+      if (sys >= 130 || dia >= 80) return 'HIGH';
+      if (sys >= 120 && sys < 130 && dia < 80) return 'ELEVATED';
+      return 'NORMAL';
+    }
+    case 'hr':
+      if (num < 60) return 'LOW';
+      if (num > 100) return 'HIGH';
+      return 'NORMAL';
+    case 'glucose':
+      if (num < 70) return 'LOW';
+      if (num > 140) return 'HIGH';
+      return 'NORMAL';
+    case 'spo2':
+      if (num < 90) return 'CRITICAL';
+      if (num < 95) return 'LOW';
+      return 'NORMAL';
+    case 'weight':
+      return 'RECORDED'; 
+    default:
+      return 'NORMAL';
+  }
+};
+
 function VitalCard({ type, latest, index }: { type: VitalType; latest: VitalReading | null; index: number }) {
   const { colors, isDark } = useTheme();
   const scale = useTextScale();
   const cfg = vitalConfig[type];
   
-  const getStatusColor = () => {
-    if (!latest) return colors.textMuted;
-    if (latest.status === 'normal') return colors.success;
-    if (latest.status === 'caution') return colors.warning;
-    return colors.danger;
+  const getStatusColor = (s: string) => {
+    if (s === 'NORMAL' || s === 'RECORDED') return colors.success;
+    if (s === 'LOW' || s === 'ELEVATED' || s === 'CAUTION') return colors.warning;
+    if (s === 'UNKNOWN' || s === 'NONE') return colors.textMuted;
+    return colors.danger; // HIGH, CRITICAL, etc
   };
 
-  const statusColor = getStatusColor();
+  const dynamicStatus = latest ? calculateStatus(type, latest.value).toUpperCase() : 'NONE';
+  const statusColor = getStatusColor(dynamicStatus);
 
   return (
     <Animated.View
@@ -76,7 +125,7 @@ function VitalCard({ type, latest, index }: { type: VitalType; latest: VitalRead
 
       <View style={[styles.statusBadge, { backgroundColor: statusColor + '15' }]}>
         <Text style={[styles.statusText, { color: statusColor }]}>
-           {latest?.status?.toUpperCase() ?? 'NONE'}
+           {dynamicStatus}
         </Text>
       </View>
     </Animated.View>
@@ -87,9 +136,83 @@ export default function HealthScreen() {
   const { colors, isDark } = useTheme();
   const scale = useTextScale();
   const { readings, getLatest, addReading, fetchVitals } = useVitalsStore();
-  const { session } = useUserStore();
+  const { session, profile } = useUserStore();
   const [activeInput, setActiveInput] = useState<VitalType | null>(null);
   const [inputValue, setInputValue] = useState('');
+  const [showAIChecker, setShowAIChecker] = useState(false);
+  const [stepCount, setStepCount] = useState(0);
+  const [showVoiceModal, setShowVoiceModal] = useState(false);
+  const [voiceText, setVoiceText] = useState('');
+  const [voiceHint, setVoiceHint] = useState('');
+
+  // Voice text parser — interprets natural language vitals
+  const parseVoiceInput = (text: string) => {
+    const lower = text.toLowerCase();
+    let matched = false;
+    if (lower.includes('blood pressure') || lower.includes('bp')) {
+      const nums = lower.match(/(\d+)\s*(?:over|\/)\s*(\d+)/);
+      if (nums) {
+        setActiveInput('bp');
+        setInputValue(`${nums[1]}/${nums[2]}`);
+        setVoiceHint(`✅ Blood Pressure set to ${nums[1]}/${nums[2]} mmHg`);
+        matched = true;
+      }
+    } else if (lower.includes('heart rate') || lower.includes('pulse') || lower.includes('bpm')) {
+      const nums = lower.match(/(\d+)/);
+      if (nums) {
+        setActiveInput('hr');
+        setInputValue(nums[1]);
+        setVoiceHint(`✅ Heart Rate set to ${nums[1]} bpm`);
+        matched = true;
+      }
+    } else if (lower.includes('blood sugar') || lower.includes('glucose')) {
+      const nums = lower.match(/(\d+)/);
+      if (nums) {
+        setActiveInput('glucose');
+        setInputValue(nums[1]);
+        setVoiceHint(`✅ Blood Sugar set to ${nums[1]} mg/dL`);
+        matched = true;
+      }
+    } else if (lower.includes('oxygen') || lower.includes('spo2') || lower.includes('saturation')) {
+      const nums = lower.match(/(\d+)/);
+      if (nums) {
+        setActiveInput('spo2');
+        setInputValue(nums[1]);
+        setVoiceHint(`✅ SpO2 set to ${nums[1]}%`);
+        matched = true;
+      }
+    } else if (lower.includes('weight')) {
+      const nums = lower.match(/(\d+)/);
+      if (nums) {
+        setActiveInput('weight');
+        setInputValue(nums[1]);
+        setVoiceHint(`✅ Weight set to ${nums[1]} kg`);
+        matched = true;
+      }
+    }
+    if (!matched) {
+      setVoiceHint('❌ Could not understand. Try: "Blood pressure 120 over 80"');
+    }
+  };
+
+  useEffect(() => {
+    let subscription: Pedometer.Subscription | null = null;
+    const subscribeP = async () => {
+      if (await Pedometer.isAvailableAsync()) {
+        const start = new Date(); start.setHours(0,0,0,0);
+        try {
+          const past = await Pedometer.getStepCountAsync(start, new Date());
+          if (past) setStepCount(past.steps);
+        } catch (e) { console.log(e); }
+
+        subscription = Pedometer.watchStepCount(res => {
+          setStepCount(prev => prev + 1); // Mock trigger bump
+        });
+      }
+    };
+    if (Platform.OS !== 'web' && profile?.role === 'senior') subscribeP();
+    return () => { subscription && subscription.remove(); };
+  }, [profile]);
 
   useEffect(() => {
     if (session) fetchVitals();
@@ -102,12 +225,14 @@ export default function HealthScreen() {
     }
     const cfg = vitalConfig[activeInput];
     
+    const calculatedStatus = calculateStatus(activeInput, inputValue.trim());
+
     await addReading({
       type: activeInput,
       value: inputValue.trim(),
       unit: cfg.unit,
       measured_at: new Date().toISOString(),
-      status: 'normal',
+      status: calculatedStatus.toLowerCase(),
     });
 
     Alert.alert('✅ Logged!', `${cfg.label} saved successfully.`);
@@ -115,7 +240,9 @@ export default function HealthScreen() {
     setActiveInput(null);
   };
 
-  const recentAlerts = readings.filter((r) => r.status !== 'normal').slice(0, 3);
+  const recentAlerts = readings
+    .filter((r) => calculateStatus(r.type as VitalType, r.value) !== 'NORMAL' && calculateStatus(r.type as VitalType, r.value) !== 'RECORDED')
+    .slice(0, 3);
 
   // Prepare chart data for Blood Pressure
   const bpReadings = readings
@@ -145,60 +272,110 @@ export default function HealthScreen() {
             </Text>
           </Animated.View>
 
-          {/* Log New Reading */}
-          <Text style={[styles.sectionTitle, { color: colors.text, fontSize: 18 * scale }]}>Log New Reading</Text>
-          <View style={styles.logGrid}>
-            {(Object.keys(vitalConfig) as VitalType[]).map((type) => {
-              const cfg = vitalConfig[type];
-              const active = activeInput === type;
-              return (
-                <TouchableOpacity
-                  key={type}
-                  onPress={() => { setActiveInput(active ? null : type); setInputValue(''); }}
-                   style={[
-                    styles.logChip, 
-                    { 
-                      backgroundColor: active ? cfg.color : colors.surface, 
-                      borderColor: active ? cfg.color : colors.border,
-                      elevation: active ? 4 : 0,
-                    }
-                  ]}
-                >
-                  <Ionicons name={cfg.icon} size={18} color={active ? '#FFF' : cfg.color} />
-                  <Text style={[styles.logChipText, { color: active ? '#FFF' : colors.text, fontSize: 13 * scale }]}>{cfg.label}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+          {/* AI Symptom Checker Button */}
+          <Animated.View entering={FadeInDown.delay(100).springify()} style={{ marginBottom: Spacing.xl }}>
+            <TouchableOpacity onPress={() => setShowAIChecker(true)}>
+              <LinearGradient colors={colors.primaryGradient} style={styles.aiCard} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                <View style={styles.aiIconCircle}>
+                  <Ionicons name="sparkles" size={28} color={colors.primary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.aiCardTitle}>AI Symptom Triage</Text>
+                  <Text style={styles.aiCardSub}>Describe how you feel for instant advice</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={24} color="#FFF" />
+              </LinearGradient>
+            </TouchableOpacity>
+          </Animated.View>
 
-          {activeInput && (
-            <Animated.View 
-              entering={FadeInRight.springify()} 
-              style={[styles.inputCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
-            >
-              <Text style={[styles.inputLabel, { color: colors.text, fontSize: 16 * scale }]}>
-                What is your current <Text style={{ color: vitalConfig[activeInput].color }}>{vitalConfig[activeInput].label}</Text>?
-              </Text>
-              <View style={styles.inputRow}>
-                <TextInput
-                  value={inputValue}
-                  onChangeText={setInputValue}
-                  placeholder={vitalConfig[activeInput].placeholder}
-                  placeholderTextColor={colors.textMuted}
-                  keyboardType="numeric"
-                  autoFocus
-                  style={[styles.textInput, { color: colors.text, backgroundColor: colors.background, fontSize: 24 * scale }]}
-                />
-                <Text style={[styles.unitLabel, { color: colors.textSecondary }]}>{vitalConfig[activeInput].unit}</Text>
+          {profile?.role === 'senior' && (
+            <>
+              {/* Log New Reading */}
+              <Text style={[styles.sectionTitle, { color: colors.text, fontSize: 18 * scale }]}>Log New Reading</Text>
+              <View style={styles.logGrid}>
+                {(Object.keys(vitalConfig) as VitalType[]).map((type) => {
+                  const cfg = vitalConfig[type];
+                  const active = activeInput === type;
+                  return (
+                    <TouchableOpacity
+                      key={type}
+                      onPress={() => { setActiveInput(active ? null : type); setInputValue(''); }}
+                       style={[
+                        styles.logChip, 
+                        { 
+                          backgroundColor: active ? cfg.color : colors.surface, 
+                          borderColor: active ? cfg.color : colors.border,
+                          elevation: active ? 4 : 0,
+                        }
+                      ]}
+                    >
+                      <Ionicons name={cfg.icon} size={18} color={active ? '#FFF' : cfg.color} />
+                      <Text style={[styles.logChipText, { color: active ? '#FFF' : colors.text, fontSize: 13 * scale }]}>{cfg.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
-              
+
+              {/* Voice Dictation Button */}
               <TouchableOpacity
-                onPress={handleLog}
-                style={[styles.saveBtn, { backgroundColor: vitalConfig[activeInput].color }]}
+                onPress={() => {
+                  setShowVoiceModal(true);
+                }}
+                style={[styles.voiceBtn, { backgroundColor: colors.primary + '15', borderColor: colors.primary }]}
               >
-                <Text style={styles.saveBtnText}>Save Reading</Text>
-                <Ionicons name="arrow-forward" size={18} color="#FFF" />
+                <Ionicons name="mic" size={22} color={colors.primary} />
+                <Text style={[styles.voiceBtnText, { color: colors.primary, fontSize: 15 * scale }]}>Voice Log</Text>
               </TouchableOpacity>
+
+              {activeInput && (
+                <Animated.View 
+                  entering={FadeInRight.springify()} 
+                  style={[styles.inputCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                >
+                  <Text style={[styles.inputLabel, { color: colors.text, fontSize: 16 * scale }]}>
+                    What is your current <Text style={{ color: vitalConfig[activeInput].color }}>{vitalConfig[activeInput].label}</Text>?
+                  </Text>
+                  <View style={styles.inputRow}>
+                    <TextInput
+                      value={inputValue}
+                      onChangeText={setInputValue}
+                      placeholder={vitalConfig[activeInput].placeholder}
+                      placeholderTextColor={colors.textMuted}
+                      keyboardType="numeric"
+                      autoFocus
+                      style={[styles.textInput, { color: colors.text, backgroundColor: colors.background, fontSize: 24 * scale }]}
+                    />
+                    <Text style={[styles.unitLabel, { color: colors.textSecondary }]}>{vitalConfig[activeInput].unit}</Text>
+                  </View>
+                  
+                  <TouchableOpacity
+                    onPress={handleLog}
+                    style={[styles.saveBtn, { backgroundColor: vitalConfig[activeInput].color }]}
+                  >
+                    <Text style={styles.saveBtnText}>Save Reading</Text>
+                    <Ionicons name="arrow-forward" size={18} color="#FFF" />
+                  </TouchableOpacity>
+                </Animated.View>
+              )}
+            </>
+          )}
+
+          {/* Wearable / Pedometer */}
+          {profile?.role === 'senior' && (
+            <Animated.View entering={FadeInDown.delay(100).springify()}>
+              <LinearGradient
+                colors={['#8B5CF6', '#6D28D9']}
+                start={{x:0, y:0}} end={{x:1, y:1}}
+                style={[styles.stepsCard, { elevation: 6, shadowColor: '#8B5CF6' }]}
+              >
+                <View style={styles.stepsInfo}>
+                  <Text style={[styles.stepsTitle, { color: 'rgba(255,255,255,0.8)' }]}>Daily Activity</Text>
+                  <Text style={styles.stepsCount}>{stepCount.toLocaleString()} <Text style={styles.stepsLabel}>steps</Text></Text>
+                </View>
+                <View style={styles.stepsIconBg}>
+                  <Ionicons name="walk" size={36} color="#FFF" />
+                </View>
+              </LinearGradient>
             </Animated.View>
           )}
 
@@ -238,7 +415,7 @@ export default function HealthScreen() {
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.alertText, { color: colors.text, fontSize: 15 * scale }]}>
-                      {vitalConfig[r.type as VitalType]?.label} was {r.status}
+                      {vitalConfig[r.type as VitalType]?.label} was {calculateStatus(r.type as VitalType, r.value)}
                     </Text>
                     <Text style={{ color: colors.textSecondary, fontSize: 13 * scale }}>
                       Value: {r.value} {r.unit} · {new Date(r.measured_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -252,6 +429,23 @@ export default function HealthScreen() {
           <View style={{ height: 100 }} />
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <Modal visible={showAIChecker} animationType="slide">
+        <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }}>
+          <AISymptomChecker onClose={() => setShowAIChecker(false)} />
+        </SafeAreaView>
+      </Modal>
+
+      <VoiceRecognitionSheet
+        visible={showVoiceModal}
+        onClose={() => setShowVoiceModal(false)}
+        onResult={(transcript) => {
+          parseVoiceInput(transcript);
+          // Keep it open for a second so they see the ✅ checkmark status in the parser if I add one, 
+          // or just close it if we want immediate action.
+          setTimeout(() => setShowVoiceModal(false), 1500);
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -263,6 +457,12 @@ const styles = StyleSheet.create({
   title: { fontWeight: '800', letterSpacing: -1 },
   subtitle: { fontWeight: '600', opacity: 0.6 },
   sectionTitle: { fontWeight: '800', marginBottom: Spacing.md, letterSpacing: -0.5 },
+  stepsCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: Spacing.xl, borderRadius: Radius.xl, marginBottom: Spacing.xl, marginTop: Spacing.lg },
+  stepsInfo: { gap: 4 },
+  stepsTitle: { fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1, fontSize: 13 },
+  stepsCount: { fontWeight: '900', color: '#FFF', fontSize: 36, letterSpacing: -1 },
+  stepsLabel: { fontSize: 16, fontWeight: '700', color: 'rgba(255,255,255,0.7)' },
+  stepsIconBg: { width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' },
   vitalCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, borderRadius: Radius.xl, borderWidth: 1, padding: Spacing.lg, marginBottom: Spacing.md, elevation: 1, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 5 },
   vitalIconWrap: { width: 52, height: 52, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
   vitalInfo: { flex: 1, gap: 2 },
@@ -284,5 +484,19 @@ const styles = StyleSheet.create({
   alertCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, borderRadius: Radius.lg, borderWidth: 1, padding: Spacing.lg, marginBottom: Spacing.md },
   alertIconCircle: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' },
   alertText: { fontWeight: '700' },
+  aiCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, borderRadius: Radius.xl, padding: Spacing.xl, elevation: 8, shadowColor: '#6366F1', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.3, shadowRadius: 15 },
+  aiIconCircle: { width: 52, height: 52, borderRadius: 26, backgroundColor: '#FFF', alignItems: 'center', justifyContent: 'center' },
+  aiCardTitle: { color: '#FFF', fontWeight: '800', fontSize: 18 },
+  aiCardSub: { color: 'rgba(255,255,255,0.8)', fontWeight: '600', fontSize: 13 },
+  voiceBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 52, borderRadius: Radius.full, borderWidth: 1.5, marginTop: Spacing.md },
+  voiceBtnText: { fontWeight: '700' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' },
+  voiceModal: { borderTopLeftRadius: Radius.xl * 1.5, borderTopRightRadius: Radius.xl * 1.5, padding: Spacing.xl, paddingBottom: 40, gap: Spacing.lg, elevation: 20 },
+  voiceModalTitle: { fontWeight: '800', fontSize: 22, letterSpacing: -0.5 },
+  voiceModalHint: { fontWeight: '500', fontSize: 14, lineHeight: 20 },
+  voiceInput: { borderRadius: Radius.md, borderWidth: 1, padding: Spacing.lg, fontSize: 17, minHeight: 80, textAlignVertical: 'top' },
+  voiceActions: { flexDirection: 'row', gap: Spacing.md },
+  voiceCancel: { flex: 1, height: 52, alignItems: 'center', justifyContent: 'center', borderRadius: Radius.full, borderWidth: 1 },
+  voiceConfirm: { flex: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 52, borderRadius: Radius.full },
 });
 

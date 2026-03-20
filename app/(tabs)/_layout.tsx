@@ -15,7 +15,9 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { useTheme } from '@/hooks/useTheme';
+import { useUserStore } from '@/stores/userStore';
 import { Spacing, Radius } from '@/constants/Typography';
+import NameSetupModal from '@/components/NameSetupModal';
 
 const { width } = Dimensions.get('window');
 const TAB_BAR_WIDTH = width - Spacing.lg * 2;
@@ -129,48 +131,51 @@ export default function TabLayout() {
   const { colors } = useTheme();
 
   return (
-    <Tabs
-      tabBar={(props) => <CustomTabBar {...props} />}
-      screenOptions={{
-        headerShown: false,
-      }}
-    >
-      <Tabs.Screen
-        name="index"
-        options={{
-          tabBarLabel: 'Home',
-          tabBarIconName: 'home',
-        } as any}
-      />
-      <Tabs.Screen
-        name="medications"
-        options={{
-          tabBarLabel: 'Meds',
-          tabBarIconName: 'medical',
-        } as any}
-      />
-      <Tabs.Screen
-        name="health"
-        options={{
-          tabBarLabel: 'Health',
-          tabBarIconName: 'heart',
-        } as any}
-      />
-      <Tabs.Screen
-        name="appointments"
-        options={{
-          tabBarLabel: 'Appts',
-          tabBarIconName: 'calendar',
-        } as any}
-      />
-      <Tabs.Screen
-        name="family"
-        options={{
-          tabBarLabel: 'Family',
-          tabBarIconName: 'people',
-        } as any}
-      />
-    </Tabs>
+    <View style={{ flex: 1 }}>
+      <Tabs
+        tabBar={(props) => <CustomTabBar {...props} />}
+        screenOptions={{
+          headerShown: false,
+        }}
+      >
+        <Tabs.Screen
+          name="index"
+          options={{
+            tabBarLabel: 'Home',
+            tabBarIconName: 'home',
+          } as any}
+        />
+        <Tabs.Screen
+          name="medications"
+          options={{
+            tabBarLabel: 'Meds',
+            tabBarIconName: 'medical',
+          } as any}
+        />
+        <Tabs.Screen
+          name="health"
+          options={{
+            tabBarLabel: 'Health',
+            tabBarIconName: 'heart',
+          } as any}
+        />
+        <Tabs.Screen
+          name="appointments"
+          options={{
+            tabBarLabel: 'Appts',
+            tabBarIconName: 'calendar',
+          } as any}
+        />
+        <Tabs.Screen
+          name="family"
+          options={{
+            tabBarLabel: 'Family',
+            tabBarIconName: 'people',
+          } as any}
+        />
+      </Tabs>
+      <NameSetupModal />
+    </View>
   );
 }
 

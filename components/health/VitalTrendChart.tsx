@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Dimensions, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, useWindowDimensions } from 'react-native';
 import { LineChart } from 'react-native-chart-kit';
 import { useTheme } from '@/hooks/useTheme';
 import { Radius, Spacing } from '@/constants/Typography';
@@ -14,7 +14,8 @@ interface VitalTrendChartProps {
 
 export default function VitalTrendChart({ data, labels, unit, color, title }: VitalTrendChartProps) {
   const { colors, isDark } = useTheme();
-  const screenWidth = Dimensions.get('window').width - (Spacing.lg * 2);
+  const { width } = useWindowDimensions();
+  const screenWidth = width - (Spacing.lg * 2);
 
   if (data.length === 0) {
     return (

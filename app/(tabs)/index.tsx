@@ -9,9 +9,12 @@ import {
   Alert,
   Dimensions,
   Image,
+  ActivityIndicator,
+  Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import * as Location from 'expo-location';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { 
@@ -32,6 +35,7 @@ import { Colors } from '@/constants/Colors';
 import { Spacing, Radius, Typography } from '@/constants/Typography';
 import MedicationReminderModal from '@/components/modals/MedicationReminderModal';
 import SOSButton from '@/components/home/SOSButton';
+import CaregiverDashboard from '@/components/home/CaregiverDashboard';
 
 const { width } = Dimensions.get('window');
 
@@ -45,14 +49,52 @@ function getGreeting(): string {
   return 'Good evening';
 }
 
-function getWeatherIcon(): { icon: keyof typeof Ionicons.glyphMap; label: string; color: string } {
-  const mock = Math.floor(Date.now() / 86400000) % 3;
-  const options = [
-    { icon: 'sunny' as const, label: 'Sunny', color: '#F59E0B' },
-    { icon: 'partly-sunny' as const, label: 'Partly Cloudy', color: '#6B7280' },
-    { icon: 'rainy' as const, label: 'Rainy', color: '#3B82F6' },
-  ];
-  return options[mock];
+function parseWeatherCode(code: number): { icon: keyof typeof Ionicons.glyphMap; label: string; color: string } {
+  if (code === 0) return { icon: 'sunny', label: 'Clear', color: '#F59E0B' };
+  if (code >= 1 && code <= 3) return { icon: 'partly-sunny', label: 'Cloudy', color: '#6B7280' };
+  if (code >= 45 && code <= 48) return { icon: 'cloud', label: 'Fog', color: '#9CA3AF' };
+  if (code >= 51 && code <= 67) return { icon: 'rainy', label: 'Rain', color: '#3B82F6' };
+  if (code >= 71 && code <= 77) return { icon: 'snow', label: 'Snow', color: '#93C5FD' };
+  if (code >= 95) return { icon: 'thunderstorm', label: 'Storm', color: '#4F46E5' };
+  return { icon: 'partly-sunny', label: 'Cloudy', color: '#6B7280' };
+}
+
+function useLiveWeather() {
+  const [data, setData] = useState({ temp: '--', city: 'Locating...', icon: parseWeatherCode(1) });
+  
+  useEffect(() => {
+    (async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          setData(prev => ({ ...prev, city: 'Weather Unavailable' }));
+          return;
+        }
+
+        const location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        const { latitude, longitude } = location.coords;
+
+        // Reverse Geocode for City
+        const geocode = await Location.reverseGeocodeAsync({ latitude, longitude });
+        const city = geocode[0]?.city || geocode[0]?.region || 'Unknown Location';
+
+        // Fetch Open-Meteo strictly for temperature (free, no API key required)
+        const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true&temperature_unit=fahrenheit`);
+        const weatherJson = await weatherRes.json();
+        const current = weatherJson.current_weather;
+
+        setData({
+          temp: `${Math.round(current.temperature)}°`,
+          city: city,
+          icon: parseWeatherCode(current.weathercode)
+        });
+      } catch (e) {
+        setData(prev => ({ ...prev, city: 'Offline' }));
+      }
+    })();
+  }, []);
+
+  return data;
 }
 
 function useCurrentTime() {
@@ -99,39 +141,41 @@ function StatCard({
     <Animated.View 
       entering={FadeInDown.delay(delay).springify()}
       layout={Layout.springify()}
-      style={[styles.statCardWrapper, animatedStyle]}
+      style={styles.statCardWrapper}
     >
-      <TouchableOpacity
-        activeOpacity={0.9}
-        onPressIn={() => (pressed.value = 0.96)}
-        onPressOut={() => (pressed.value = 1)}
-        onPress={onPress}
-        style={styles.touchable}
-      >
-        <LinearGradient
-          colors={isDark ? ['#1E293B', '#0F172A'] : ['#FFFFFF', '#F8FAFC']}
-          style={[styles.statCard, { borderColor: colors.border }]}
+      <Animated.View style={animatedStyle}>
+        <TouchableOpacity
+          activeOpacity={0.9}
+          onPressIn={() => (pressed.value = 0.96)}
+          onPressOut={() => (pressed.value = 1)}
+          onPress={onPress}
+          style={styles.touchable}
         >
-          <View style={[styles.statIcon, { backgroundColor: iconBg }]}>
-            <Ionicons name={icon} size={24} color={iconColor} />
-          </View>
-          <View style={styles.statText}>
-            <Text style={[styles.statLabel, { color: colors.textSecondary, fontSize: 13 * scale }]}>
-              {label}
-            </Text>
-            <Text
-              style={[
-                styles.statValue,
-                { color: valueColor ?? colors.text, fontSize: 16 * scale },
-              ]}
-              numberOfLines={1}
-            >
-              {value}
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-        </LinearGradient>
-      </TouchableOpacity>
+          <LinearGradient
+            colors={isDark ? ['#1E293B', '#0F172A'] : ['#FFFFFF', '#F8FAFC']}
+            style={[styles.statCard, { borderColor: colors.border }]}
+          >
+            <View style={[styles.statIcon, { backgroundColor: iconBg }]}>
+              <Ionicons name={icon} size={24} color={iconColor} />
+            </View>
+            <View style={styles.statText}>
+              <Text style={[styles.statLabel, { color: colors.textSecondary, fontSize: 13 * scale }]}>
+                {label}
+              </Text>
+              <Text
+                style={[
+                  styles.statValue,
+                  { color: valueColor ?? colors.text, fontSize: 16 * scale },
+                ]}
+                numberOfLines={1}
+              >
+                {value}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+          </LinearGradient>
+        </TouchableOpacity>
+      </Animated.View>
     </Animated.View>
   );
 }
@@ -146,11 +190,12 @@ export default function HomeScreen() {
     medications, 
     setShowReminderModal, 
     setActiveMedication, 
-    fetchMedications 
+    fetchMedications,
+    getStreak,
   } = useMedicationStore();
   const { getLatest, fetchVitals } = useVitalsStore();
   const time = useCurrentTime();
-  const weather = getWeatherIcon();
+  const liveWeather = useLiveWeather();
 
   useEffect(() => {
     if (session) {
@@ -159,7 +204,17 @@ export default function HomeScreen() {
     }
   }, [session]);
 
-  if (!profile) return null;
+  if (!profile) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.background }}>
+        <ActivityIndicator size="large" color={colors.primary} />
+      </View>
+    );
+  }
+
+  if (profile.role === 'caregiver') {
+    return <CaregiverDashboard />;
+  }
 
   const todayDoses = getTodayDoses();
   const takenCount = todayDoses.filter((d) => d.status === 'taken').length;
@@ -170,16 +225,20 @@ export default function HomeScreen() {
     : null;
 
   const latestBP = getLatest('bp');
+  const streak = getStreak();
 
   const handleCallFamily = useCallback(() => {
-    Alert.alert(
-      'Call Family',
-      'Who would you like to call?',
-      profile.emergencyContacts.map((c) => ({
-        text: `${c.name} (${c.relationship})`,
-        onPress: () => Alert.alert('Calling', `Calling ${c.name}...`),
-      }))
-    );
+    if (!profile.emergencyContacts || profile.emergencyContacts.length === 0) {
+      Alert.alert('No Contacts', 'Please link a Caregiver or add an emergency contact in the Family tab first.');
+      return;
+    }
+    
+    // Find absolute primary, fallback to first contact
+    const primary = profile.emergencyContacts.find((c) => c.isPrimary) || profile.emergencyContacts[0];
+    
+    Linking.openURL(`tel:${primary.phone}`).catch(() => {
+      Alert.alert('Error', 'Could not open the native phone dialer.');
+    });
   }, [profile.emergencyContacts]);
 
   return (
@@ -204,12 +263,15 @@ export default function HomeScreen() {
                   {getGreeting()},
                 </Text>
                 <Text style={[styles.nameText, { color: colors.primary, fontSize: 32 * scale }]}>
-                  {profile.firstName}
+                  {profile.firstName || 'valued member'}
                 </Text>
               </View>
               <BlurView intensity={isDark ? 40 : 60} style={styles.weatherGlass}>
-                <Ionicons name={weather.icon} size={28} color={weather.color} />
-                <Text style={[styles.weatherTemp, { color: colors.text }]}>72°</Text>
+                <Ionicons name={liveWeather.icon.icon} size={28} color={liveWeather.icon.color} />
+                <View>
+                  <Text style={[styles.weatherTemp, { color: colors.text }]}>{liveWeather.temp}</Text>
+                  <Text style={{ color: colors.textSecondary, fontSize: 10, fontWeight: '700' }}>{liveWeather.city}</Text>
+                </View>
               </BlurView>
             </View>
 
@@ -223,6 +285,26 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.mainContent}>
+          {/* ── STREAK BADGE ── */}
+          {streak > 0 && (
+            <Animated.View entering={FadeInDown.delay(50).springify()} style={{ marginBottom: Spacing.lg }}>
+              <LinearGradient
+                colors={['#F59E0B', '#EF4444']}
+                start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                style={styles.streakCard}
+              >
+                <Text style={styles.streakEmoji}>🔥</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.streakTitle}>{streak}-Day Streak!</Text>
+                  <Text style={styles.streakSub}>All pills taken {streak} days in a row. Keep it up!</Text>
+                </View>
+                <View style={styles.streakBadge}>
+                  <Text style={styles.streakBadgeNum}>{streak}</Text>
+                  <Text style={styles.streakBadgeLabel}>days</Text>
+                </View>
+              </LinearGradient>
+            </Animated.View>
+          )}
           {/* ── NEXT REMINDER ── */}
           <LinearGradient
             colors={colors.primaryGradient}
@@ -518,4 +600,11 @@ const styles = StyleSheet.create({
   sosWrapper: {
     marginTop: Spacing.xxxl,
   },
+  streakCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, padding: Spacing.lg, borderRadius: Radius.xl, elevation: 6, shadowColor: '#F59E0B', shadowOpacity: 0.4, shadowRadius: 12 },
+  streakEmoji: { fontSize: 36 },
+  streakTitle: { color: '#FFF', fontWeight: '900', fontSize: 18, letterSpacing: -0.5 },
+  streakSub: { color: 'rgba(255,255,255,0.85)', fontWeight: '500', fontSize: 13, marginTop: 2 },
+  streakBadge: { alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: Radius.lg, padding: Spacing.md, minWidth: 56 },
+  streakBadgeNum: { color: '#FFF', fontWeight: '900', fontSize: 26, letterSpacing: -1 },
+  streakBadgeLabel: { color: 'rgba(255,255,255,0.8)', fontWeight: '700', fontSize: 11, textTransform: 'uppercase' },
 });

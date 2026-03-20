@@ -9,7 +9,7 @@ export interface VitalReading {
   value: string;
   unit: string;
   measured_at: string; // Changed from timestamp/ISO for DB consistency
-  status: 'normal' | 'caution' | 'alert';
+  status: string; // Dynamic status from calculation
   notes?: string;
 }
 

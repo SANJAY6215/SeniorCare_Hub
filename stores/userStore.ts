@@ -1,5 +1,35 @@
 import { create } from 'zustand';
 import { supabase } from '@/lib/supabase';
+import { Alert, Platform } from 'react-native';
+import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
+
+async function registerForPushNotificationsAsync() {
+  let token;
+  if (Platform.OS === 'android') {
+    await Notifications.setNotificationChannelAsync('default', {
+      name: 'default',
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#FF231F7C',
+    });
+  }
+
+  if (Device.isDevice) {
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    let finalStatus = existingStatus;
+    if (existingStatus !== 'granted') {
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+    if (finalStatus !== 'granted') {
+      console.log('Failed to get push token for push notification!');
+      return undefined;
+    }
+    token = (await Notifications.getExpoPushTokenAsync({ projectId: 'your-project-id' })).data;
+  }
+  return token;
+}
 
 export interface EmergencyContact {
   id: string;
@@ -34,10 +64,12 @@ export interface UserProfile {
 
 interface UserStore {
   profile: UserProfile | null;
+  seniorProfile: UserProfile | null;
   session: any | null;
   loading: boolean;
   
   initialize: () => Promise<void>;
+  fetchSeniorProfile: () => Promise<void>;
   updateProfile: (updates: Partial<UserProfile>) => Promise<void>;
   setDarkMode: (val: boolean) => void;
   setTextSize: (size: UserProfile['textSize']) => void;
@@ -82,7 +114,7 @@ const toDbProfile = (p: Partial<UserProfile>) => {
   if (p.textSize !== undefined) db.text_size = p.textSize;
   if (p.darkMode !== undefined) db.dark_mode = p.darkMode;
   if (p.soundEnabled !== undefined) db.sound_enabled = p.soundEnabled;
-  if (p.vibrationEnabled !== undefined) db.vibrationEnabled = p.vibrationEnabled;
+  if (p.vibrationEnabled !== undefined) db.vibration_enabled = p.vibrationEnabled;
   if (p.voiceAssistEnabled !== undefined) db.voice_assist_enabled = p.voiceAssistEnabled;
   if (p.lastCheckIn !== undefined) db.last_check_in = p.lastCheckIn;
   if (p.checkInStatus !== undefined) db.check_in_status = p.checkInStatus;
@@ -113,8 +145,9 @@ const fromDbProfile = (db: any): UserProfile => ({
   expo_push_token: db.expo_push_token,
 });
 
-export const useUserStore = create<UserStore>((set, get) => ({
+const useUserStore = create<UserStore>((set, get) => ({
   profile: null,
+  seniorProfile: null,
   session: null,
   loading: true,
 
@@ -131,7 +164,25 @@ export const useUserStore = create<UserStore>((set, get) => ({
         .single();
       
       if (profile) {
-        set({ profile: fromDbProfile(profile) });
+        let parsedProfile = fromDbProfile(profile);
+
+        // Permanently patch older accounts if they are missing a family code!
+        if (parsedProfile.role === 'senior' && !parsedProfile.familyCode) {
+          parsedProfile.familyCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+          const { error } = await supabase.from('profiles').update({ family_code: parsedProfile.familyCode }).eq('id', parsedProfile.id);
+          if (error) Alert.alert('Database Sync Error', 'Could not save new code: ' + error.message);
+        }
+
+        // Register for push notifications and save to DB
+        try {
+          const token = await registerForPushNotificationsAsync();
+          if (token && parsedProfile.expo_push_token !== token) {
+            const { error } = await supabase.from('profiles').update({ expo_push_token: token }).eq('id', parsedProfile.id);
+            if (!error) parsedProfile.expo_push_token = token;
+          }
+        } catch (e) { console.log('Push notification setup error:', e); }
+
+        set({ profile: parsedProfile });
       } else {
         // Create initial profile if missing
         const meta = session.user.user_metadata || {};
@@ -144,21 +195,44 @@ export const useUserStore = create<UserStore>((set, get) => ({
           ...defaultProfile, 
           id: session.user.id,
           role,
+          firstName: meta.first_name || '',
+          lastName: meta.last_name || '',
           familyCode: newFamilyCode,
           linkedSeniorId: meta.linked_senior_id
         };
         
-        await supabase.from('profiles').insert([toDbProfile(newProfile)]);
+        // Use UPSERT just in case of parallel auth collisions
+        const { error } = await supabase.from('profiles').upsert([toDbProfile(newProfile)]);
+        if (error) Alert.alert('Profile Creation Failed', error.message);
         set({ profile: newProfile });
       }
     }
     set({ loading: false });
 
     // Listen for auth changes
-    supabase.auth.onAuthStateChange((_event, session) => {
+    supabase.auth.onAuthStateChange((event, session) => {
       set({ session });
-      if (!session) set({ profile: null });
+      if (!session) {
+        set({ profile: null, seniorProfile: null });
+      } else if (event === 'SIGNED_IN') {
+        get().initialize();
+      }
     });
+  },
+
+  fetchSeniorProfile: async () => {
+    const { profile } = get();
+    if (!profile || profile.role !== 'caregiver' || !profile.linkedSeniorId) return;
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', profile.linkedSeniorId)
+      .single();
+
+    if (data && !error) {
+      set({ seniorProfile: fromDbProfile(data) });
+    }
   },
 
   updateProfile: async (updates) => {
@@ -192,6 +266,9 @@ export const useUserStore = create<UserStore>((set, get) => ({
 
   signOut: async () => {
     await supabase.auth.signOut();
-    set({ session: null, profile: null });
+    set({ session: null, profile: null, seniorProfile: null });
   },
 }));
+
+export { useUserStore };
+
