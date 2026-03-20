@@ -3,12 +3,12 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 
-serve(async (req) => {
+serve(async (req: Request) => {
   try {
-    const { record, old_record } = await req.json();
+    const { record } = await req.json();
 
     // Only proceed if status changed to 'missed'
-    if (record.status !== 'missed') {
+    if (record?.status !== 'missed') {
       return new Response(JSON.stringify({ message: "Not a missed dose" }), { status: 200 });
     }
 
@@ -19,39 +19,43 @@ serve(async (req) => {
     );
 
     // 1. Get Senior Name and Medication Name
-    const { data: medData } = await supabaseClient
+    const { data: medData, error: medError } = await supabaseClient
       .from('medications')
       .select('name, profiles(first_name, last_name)')
       .eq('id', record.medication_id)
       .single();
 
-    if (!medData) throw new Error("Medication not found");
+    if (medError || !medData) throw new Error("Medication or profile data not found");
 
-    const seniorName = `${medData.profiles?.first_name} ${medData.profiles?.last_name}`;
+    // Type casting for profiles (since it comes from a join)
+    const profile = Array.isArray(medData.profiles) ? medData.profiles[0] : medData.profiles;
+    const seniorName = profile ? `${profile.first_name || 'Senior'} ${profile.last_name || ''}` : 'Your Senior';
     const medName = medData.name;
 
     // 2. Find linked Caregivers with push tokens
-    const { data: caregivers } = await supabaseClient
+    const { data: caregivers, error: cgError } = await supabaseClient
       .from('profiles')
       .select('expo_push_token, first_name')
       .eq('linked_senior_id', record.user_id)
       .not('expo_push_token', 'is', null);
+
+    if (cgError) throw cgError;
 
     if (!caregivers || caregivers.length === 0) {
       return new Response(JSON.stringify({ message: "No caregivers with tokens found" }), { status: 200 });
     }
 
     // 3. Prepare Push Notifications
-    const notifications = caregivers.map(cg => ({
+    const notifications = caregivers.map((cg: any) => ({
       to: cg.expo_push_token,
       sound: 'default',
       title: '⚠️ Missed Medication Alert',
-      body: `Warning: ${seniorName} has missed their dosage of ${medName} scheduled for ${record.scheduled_time}.`,
-      data: { seniorId: record.user_id, medId: record.medication_id },
+      body: `Warning: ${seniorName.trim()} has missed their dosage of ${medName} scheduled for ${record.scheduled_time}.`,
+      data: { seniorId: record.user_id, medId: record.medication_id, type: 'MISSED_DOSE' },
       priority: 'high',
     }));
 
-    // 4. Send to Expo
+    // 4. Send to Expo Notification Service
     const response = await fetch(EXPO_PUSH_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -59,15 +63,12 @@ serve(async (req) => {
     });
 
     const result = await response.json();
-    console.log("Expo response:", result);
-
-    return new Response(JSON.stringify({ success: true, count: notifications.length }), {
+    return new Response(JSON.stringify({ success: true, expo: result }), {
       headers: { "Content-Type": "application/json" },
       status: 200,
     });
 
-  } catch (error) {
-    console.error("Error in notify-caregiver:", error.message);
+  } catch (error: any) {
     return new Response(JSON.stringify({ error: error.message }), {
       headers: { "Content-Type": "application/json" },
       status: 500,

@@ -39,9 +39,6 @@ import CaregiverDashboard from '@/components/home/CaregiverDashboard';
 
 const { width } = Dimensions.get('window');
 
-// Path to the generated hero illustration
-const HERO_IMAGE = require('../../assets/images/senior_care_hero.png');
-
 function getGreeting(): string {
   const hour = new Date().getHours();
   if (hour < 12) return 'Good morning';
@@ -249,8 +246,7 @@ export default function HomeScreen() {
         stickyHeaderIndices={[0]}
       >
         {/* ── HERO HEADER ── */}
-        <View style={styles.heroContainer}>
-          <Image source={HERO_IMAGE} style={styles.heroImage} />
+        <View style={[styles.heroContainer, { backgroundColor: colors.primary }]}>
           <LinearGradient
             colors={['transparent', colors.background]}
             style={styles.heroGradient}

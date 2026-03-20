@@ -37,7 +37,7 @@
         "backgroundColor": "#22C55E"
       },
       "package": "com.seniorcarehub.app",
-      "versionCode": 3,
+      "versionCode": 4,
       "permissions": [
         "CAMERA",
         "RECORD_AUDIO",
