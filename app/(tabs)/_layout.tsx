@@ -18,6 +18,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { useUserStore } from '@/stores/userStore';
 import { Spacing, Radius } from '@/constants/Typography';
 import NameSetupModal from '@/components/NameSetupModal';
+import VoiceAssistant from '@/components/voice/VoiceAssistant';
 
 const { width } = Dimensions.get('window');
 const TAB_BAR_WIDTH = width - Spacing.lg * 2;
@@ -175,6 +176,7 @@ export default function TabLayout() {
         />
       </Tabs>
       <NameSetupModal />
+      <VoiceAssistant />
     </View>
   );
 }

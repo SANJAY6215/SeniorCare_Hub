@@ -12,6 +12,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/hooks/useTheme';
+import { supabase } from '@/lib/supabase';
+import { useUserStore } from '@/stores/userStore';
 import { useTextScale } from '@/hooks/useTheme';
 import { Spacing, Radius } from '@/constants/Typography';
 import Animated, { FadeInUp, FadeInDown } from 'react-native-reanimated';
@@ -129,8 +131,24 @@ export default function AISymptomChecker({ onClose }: { onClose: () => void }) {
     return "Thank you. Please remember I am an AI; for any health concerns, always contact your doctor or caregiver.";
   };
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!inputText.trim()) return;
+
+    const user = useUserStore.getState().profile;
+    if (!user) return;
+
+    // Rate Limit AI requests
+    const { data: canProceed } = await supabase.rpc('check_rate_limit', {
+      target_identifier: user.id,
+      target_endpoint: 'ai_health_query',
+      max_hits: 10,
+      window_minutes: 5
+    });
+
+    if (!canProceed) {
+      Alert.alert('Too Many Requests', 'Please wait a few minutes before asking more health questions.');
+      return;
+    }
 
     const userMsg: Message = { id: Date.now().toString(), sender: 'user', text: inputText.trim() };
     setMessages(prev => [...prev, userMsg]);

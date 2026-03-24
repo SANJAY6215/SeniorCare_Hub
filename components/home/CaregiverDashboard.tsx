@@ -14,16 +14,20 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import Animated, { FadeInDown, Layout } from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTheme, useTextScale } from '@/hooks/useTheme';
 import { useUserStore } from '@/stores/userStore';
-import { useMedicationStore } from '@/stores/medicationStore';
+import { useMedicationStore, DoseLog } from '@/stores/medicationStore';
 import { useVitalsStore } from '@/stores/vitalsStore';
 import { Spacing, Radius } from '@/constants/Typography';
+import StatCard from '@/components/shared/StatCard';
+import ThemedCard from '@/components/shared/ThemedCard';
 
 export default function CaregiverDashboard() {
   const { colors, isDark } = useTheme();
   const scale = useTextScale();
+  const insets = useSafeAreaInsets();
   const { profile, seniorProfile, fetchSeniorProfile } = useUserStore();
   const { getTodayDoses, getAdherencePercent, medications, fetchMedications } = useMedicationStore();
   const { getLatest, fetchVitals } = useVitalsStore();
@@ -36,10 +40,12 @@ export default function CaregiverDashboard() {
     fetchSeniorProfile();
   }, []);
 
+  if (!profile) return null;
+
   const adherence = getAdherencePercent();
   const todayDoses = getTodayDoses();
-  const taken = todayDoses.filter((d) => d.status === 'taken').length;
-  const missed = todayDoses.filter((d) => d.status === 'missed').length;
+  const taken = todayDoses.filter((d: DoseLog) => d.status === 'taken').length;
+  const missed = todayDoses.filter((d: DoseLog) => d.status === 'missed').length;
   const pending = todayDoses.length - taken - missed;
 
   const latestBP = getLatest('bp');
@@ -52,51 +58,58 @@ export default function CaregiverDashboard() {
   const statusColor = adherence >= 80 ? colors.success : adherence >= 50 ? colors.warning : colors.danger;
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: Math.max(insets.top, Spacing.md) }]}>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         
         {/* Header */}
-        <Animated.View entering={FadeInDown.duration(400)} style={styles.header}>
-          <Text style={[styles.greeting, { color: colors.textSecondary, fontSize: 16 * scale }]}>
-            Caregiver Overview
-          </Text>
-          <Text style={[styles.title, { color: colors.text, fontSize: 28 * scale }]}>
-            Senior Health Status
-          </Text>
+        <Animated.View entering={FadeInDown.duration(400)} style={[styles.header, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }]}>
+          <View>
+            <Text style={[styles.greeting, { color: colors.textSecondary, fontSize: 13 * scale }]}>
+              Caregiver Overview
+            </Text>
+            <Text style={[styles.title, { color: colors.text, fontSize: 22 * scale }]}>
+              Senior Health Status
+            </Text>
+          </View>
+          <TouchableOpacity 
+            onPress={() => router.push('/caregiver/settings')}
+            style={styles.settingsBtn}
+          >
+            <Ionicons name="settings-outline" size={24} color={colors.textSecondary} />
+          </TouchableOpacity>
         </Animated.View>
 
         {/* Adherence Card */}
-        <Animated.View entering={FadeInDown.delay(100).springify()}>
-          <LinearGradient
-            colors={isDark ? ['#1e293b', '#0f172a'] : [colors.primaryLight, '#F8FAFC']}
-            style={[styles.adherenceCard, { borderColor: colors.border }]}
-          >
-            <View style={styles.adherenceTop}>
-              <View>
-                <Text style={[styles.adherenceTitle, { color: colors.textSecondary }]}>Daily Adherence</Text>
-                <Text style={[styles.adherenceValue, { color: statusColor, fontSize: 42 * scale }]}>{adherence}%</Text>
-              </View>
-              <View style={[styles.adherenceIconBg, { backgroundColor: statusColor + '20' }]}>
-                <Ionicons name="medical" size={32} color={statusColor} />
-              </View>
+        <ThemedCard 
+          delay={100}
+          gradient={isDark ? ['#1e293b', '#0f172a'] : [colors.primaryLight, '#F8FAFC']}
+          style={{ padding: 0 }} // ThemedCard has internal padding, adjusting
+        >
+          <View style={styles.adherenceTop}>
+            <View>
+              <Text style={[styles.adherenceTitle, { color: colors.textSecondary, fontSize: 12 * scale }]}>Daily Adherence</Text>
+              <Text style={[styles.adherenceValue, { color: statusColor, fontSize: 32 * scale }]}>{adherence}%</Text>
             </View>
+            <View style={[styles.adherenceIconBg, { backgroundColor: statusColor + '20' }]}>
+              <Ionicons name="medical" size={32} color={statusColor} />
+            </View>
+          </View>
 
-            <View style={styles.statsRow}>
-              <View style={styles.statBox}>
-                <Text style={[styles.statBoxTitle, { color: colors.textSecondary }]}>Taken</Text>
-                <Text style={[styles.statBoxValue, { color: colors.success }]}>{taken}</Text>
-              </View>
-              <View style={styles.statBox}>
-                <Text style={[styles.statBoxTitle, { color: colors.textSecondary }]}>Pending</Text>
-                <Text style={[styles.statBoxValue, { color: colors.warning }]}>{pending}</Text>
-              </View>
-              <View style={styles.statBox}>
-                <Text style={[styles.statBoxTitle, { color: colors.textSecondary }]}>Missed</Text>
-                <Text style={[styles.statBoxValue, { color: colors.danger }]}>{missed}</Text>
-              </View>
+          <View style={styles.statsRow}>
+            <View style={styles.statBox}>
+              <Text style={[styles.statBoxTitle, { color: colors.textSecondary }]}>Taken</Text>
+              <Text style={[styles.statBoxValue, { color: colors.success }]}>{taken}</Text>
             </View>
-          </LinearGradient>
-        </Animated.View>
+            <View style={styles.statBox}>
+              <Text style={[styles.statBoxTitle, { color: colors.textSecondary }]}>Pending</Text>
+              <Text style={[styles.statBoxValue, { color: colors.warning }]}>{pending}</Text>
+            </View>
+            <View style={styles.statBox}>
+              <Text style={[styles.statBoxTitle, { color: colors.textSecondary }]}>Missed</Text>
+              <Text style={[styles.statBoxValue, { color: colors.danger }]}>{missed}</Text>
+            </View>
+          </View>
+        </ThemedCard>
 
         {/* Vitals Summary */}
         <Animated.View entering={FadeInDown.delay(200).springify()}>
@@ -105,17 +118,23 @@ export default function CaregiverDashboard() {
           </View>
           
           <View style={styles.vitalsGrid}>
-            <View style={[styles.vitalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <Ionicons name="heart" size={24} color={colors.danger} />
-              <Text style={[styles.vitalLabel, { color: colors.textSecondary }]}>Blood Pressure</Text>
-              <Text style={[styles.vitalValue, { color: colors.text }]}>{latestBP ? latestBP.value : '-- / --'}</Text>
-            </View>
+            <StatCard
+              icon="heart"
+              iconColor={colors.danger}
+              iconBg={isDark ? '#4C0519' : '#FFE4E6'}
+              label="Blood Pressure"
+              value={latestBP ? latestBP.value : '-- / --'}
+              delay={200}
+            />
             
-            <View style={[styles.vitalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <Ionicons name="pulse" size={24} color={colors.primary} />
-              <Text style={[styles.vitalLabel, { color: colors.textSecondary }]}>Heart Rate</Text>
-              <Text style={[styles.vitalValue, { color: colors.text }]}>{latestHR ? latestHR.value : '-- bpm'}</Text>
-            </View>
+            <StatCard
+              icon="pulse"
+              iconColor={colors.primary}
+              iconBg={isDark ? '#065F46' : '#D1FAE5'}
+              label="Heart Rate"
+              value={latestHR ? latestHR.value : '-- bpm'}
+              delay={300}
+            />
           </View>
         </Animated.View>
 
@@ -152,8 +171,9 @@ export default function CaregiverDashboard() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  scrollContent: { padding: Spacing.lg, paddingTop: Spacing.xl },
-  header: { marginBottom: Spacing.xl },
+  scrollContent: { padding: Spacing.lg, paddingTop: 0 },
+  header: { marginBottom: Spacing.md },
+  settingsBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   greeting: { fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 },
   title: { fontWeight: '800', letterSpacing: -0.5 },
   adherenceCard: { padding: Spacing.xl, borderRadius: Radius.xl, borderWidth: 1, marginBottom: Spacing.xl, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 8 },

@@ -12,6 +12,10 @@
   "include": [
     "**/*.ts",
     "**/*.tsx",
-    ".expo/types/**/*.d.ts"
+    ".expo/types/**/*.d.ts",
+    "supabase/functions/deno_types.d.ts"
+  ],
+  "exclude": [
+    "node_modules"
   ]
 }

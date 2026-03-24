@@ -7,7 +7,9 @@ import * as Notifications from 'expo-notifications';
 // Suppress repetitive web-only warnings in the development overlay
 LogBox.ignoreLogs(['onStartShouldSetResponder', 'Unknown event handler property']);
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useUserStore } from '@/stores/userStore';
+import GlobalErrorBoundary from '@/components/shared/GlobalErrorBoundary';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -47,6 +49,7 @@ export default function RootLayout() {
 
   useEffect(() => {
     initialize();
+    useUserStore.getState().setupAuthListener();
     
     // Request notification permissions
     const registerForPushNotifications = async () => {
@@ -61,7 +64,7 @@ export default function RootLayout() {
       if (finalStatus === 'granted') {
         try {
           const tokenData = await Notifications.getExpoPushTokenAsync({
-            projectId: '87b4c93a-5031-4b24-a15f-d1576d68a365',
+            projectId: process.env.EXPO_PUBLIC_PROJECT_ID || '87b4c93a-5031-4b24-a15f-d1576d68a365',
           });
           useUserStore.getState().updateProfile({ expo_push_token: tokenData.data });
         } catch (e) {
@@ -104,9 +107,10 @@ export default function RootLayout() {
   }
 
   return (
-    <>
-      <StatusBar style={profile?.darkMode ? 'light' : 'dark'} />
-      <Stack screenOptions={{ headerShown: false }}>
+    <SafeAreaProvider>
+      <GlobalErrorBoundary>
+        <StatusBar style={profile?.darkMode ? 'light' : 'dark'} />
+        <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="login" options={{ headerShown: false }} />
         <Stack.Screen name="onboarding" options={{ headerShown: false, animation: 'fade' }} />
@@ -119,8 +123,9 @@ export default function RootLayout() {
           }}
         />
         <Stack.Screen name="settings" options={{ headerShown: false }} />
-      </Stack>
-    </>
+        </Stack>
+      </GlobalErrorBoundary>
+    </SafeAreaProvider>
   );
 }
 

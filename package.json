@@ -6,7 +6,8 @@
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@expo/ngrok": "^4.1.0",
@@ -16,20 +17,28 @@
     "expo": "~51.0.8",
     "expo-av": "~14.0.5",
     "expo-blur": "~13.0.3",
+    "expo-build-properties": "^0.12.5",
+    "expo-camera": "~15.0.16",
     "expo-constants": "~16.0.1",
     "expo-device": "~6.0.2",
+    "expo-file-system": "~17.0.1",
     "expo-font": "~12.0.5",
     "expo-haptics": "~13.0.1",
+    "expo-image-manipulator": "~12.0.5",
+    "expo-image-picker": "^15.0.7",
     "expo-linear-gradient": "~13.0.2",
     "expo-linking": "~6.3.1",
     "expo-localization": "~15.0.3",
     "expo-location": "~17.0.1",
     "expo-notifications": "~0.28.1",
+    "expo-print": "~13.0.1",
     "expo-router": "~3.5.24",
     "expo-sensors": "~13.0.9",
+    "expo-sharing": "~12.0.1",
     "expo-sms": "~12.0.1",
     "expo-speech": "~12.0.2",
     "expo-status-bar": "~1.12.1",
+    "expo-updates": "~0.25.28",
     "react": "18.2.0",
     "react-dom": "18.2.0",
     "react-native": "0.74.5",
@@ -41,14 +50,28 @@
     "react-native-url-polyfill": "^2.0.0",
     "react-native-web": "~0.19.10",
     "react-native-webview": "13.8.6",
+    "zod": "^3.23.8",
     "zustand": "^4.5.2"
   },
   "devDependencies": {
+    "@testing-library/jest-native": "^5.4.3",
+    "@testing-library/react-native": "^13.3.3",
     "@types/prop-types": "^15.7.15",
     "@types/react": "~18.2.79",
     "babel-plugin-module-resolver": "^5.0.3",
     "babel-preset-expo": "~11.0.8",
-    "typescript": "~5.3.3"
+    "jsdom": "^29.0.1",
+    "patch-package": "^8.0.1",
+    "react-test-renderer": "18.2.0",
+    "typescript": "~5.3.3",
+    "vite-tsconfig-paths": "^6.1.1",
+    "vitest": "^4.1.0",
+    "vitest-react-native": "^0.1.5"
+  },
+  "overrides": {
+    "react-native-chart-kit": {
+      "react-native": "$react-native"
+    }
   },
   "private": true
 }

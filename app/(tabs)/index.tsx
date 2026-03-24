@@ -30,10 +30,13 @@ import { useTheme } from '@/hooks/useTheme';
 import { useTextScale } from '@/hooks/useTheme';
 import { useUserStore } from '@/stores/userStore';
 import { useMedicationStore } from '@/stores/medicationStore';
+import PremiumModal from '@/components/premium/PremiumModal';
+import AdBannerPlaceholder from '@/components/common/AdBannerPlaceholder';
 import { useVitalsStore } from '@/stores/vitalsStore';
 import { Colors } from '@/constants/Colors';
 import { Spacing, Radius, Typography } from '@/constants/Typography';
 import MedicationReminderModal from '@/components/modals/MedicationReminderModal';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import SOSButton from '@/components/home/SOSButton';
 import CaregiverDashboard from '@/components/home/CaregiverDashboard';
 
@@ -58,7 +61,7 @@ function parseWeatherCode(code: number): { icon: keyof typeof Ionicons.glyphMap;
 
 function useLiveWeather() {
   const [data, setData] = useState({ temp: '--', city: 'Locating...', icon: parseWeatherCode(1) });
-  
+
   useEffect(() => {
     (async () => {
       try {
@@ -107,86 +110,21 @@ function useCurrentTime() {
   return time;
 }
 
-function StatCard({
-  icon,
-  iconColor,
-  iconBg,
-  label,
-  value,
-  valueColor,
-  delay = 0,
-  onPress,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  iconColor: string;
-  iconBg: string;
-  label: string;
-  value: string;
-  valueColor?: string;
-  delay?: number;
-  onPress?: () => void;
-}) {
-  const { colors, isDark } = useTheme();
-  const scale = useTextScale();
-  const pressed = useSharedValue(1);
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: withSpring(pressed.value) }],
-  }));
-
-  return (
-    <Animated.View 
-      entering={FadeInDown.delay(delay).springify()}
-      layout={Layout.springify()}
-      style={styles.statCardWrapper}
-    >
-      <Animated.View style={animatedStyle}>
-        <TouchableOpacity
-          activeOpacity={0.9}
-          onPressIn={() => (pressed.value = 0.96)}
-          onPressOut={() => (pressed.value = 1)}
-          onPress={onPress}
-          style={styles.touchable}
-        >
-          <LinearGradient
-            colors={isDark ? ['#1E293B', '#0F172A'] : ['#FFFFFF', '#F8FAFC']}
-            style={[styles.statCard, { borderColor: colors.border }]}
-          >
-            <View style={[styles.statIcon, { backgroundColor: iconBg }]}>
-              <Ionicons name={icon} size={24} color={iconColor} />
-            </View>
-            <View style={styles.statText}>
-              <Text style={[styles.statLabel, { color: colors.textSecondary, fontSize: 13 * scale }]}>
-                {label}
-              </Text>
-              <Text
-                style={[
-                  styles.statValue,
-                  { color: valueColor ?? colors.text, fontSize: 16 * scale },
-                ]}
-                numberOfLines={1}
-              >
-                {value}
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-          </LinearGradient>
-        </TouchableOpacity>
-      </Animated.View>
-    </Animated.View>
-  );
-}
+import StatCard from '@/components/shared/StatCard';
+import ThemedCard from '@/components/shared/ThemedCard';
 
 export default function HomeScreen() {
   const { colors, isDark } = useTheme();
   const scale = useTextScale();
   const router = useRouter();
-  const { profile, session } = useUserStore();
-  const { 
-    getTodayDoses, 
-    medications, 
-    setShowReminderModal, 
-    setActiveMedication, 
+  const insets = useSafeAreaInsets();
+  const { profile, session, updateProfile } = useUserStore();
+  const [showPremiumModal, setShowPremiumModal] = useState(false);
+  const {
+    getTodayDoses,
+    medications,
+    setShowReminderModal,
+    setActiveMedication,
     fetchMedications,
     getStreak,
   } = useMedicationStore();
@@ -229,10 +167,10 @@ export default function HomeScreen() {
       Alert.alert('No Contacts', 'Please link a Caregiver or add an emergency contact in the Family tab first.');
       return;
     }
-    
+
     // Find absolute primary, fallback to first contact
     const primary = profile.emergencyContacts.find((c) => c.isPrimary) || profile.emergencyContacts[0];
-    
+
     Linking.openURL(`tel:${primary.phone}`).catch(() => {
       Alert.alert('Error', 'Could not open the native phone dialer.');
     });
@@ -240,6 +178,10 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+      <PremiumModal
+        visible={showPremiumModal}
+        onClose={() => setShowPremiumModal(false)}
+      />
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
@@ -252,32 +194,47 @@ export default function HomeScreen() {
             style={styles.heroGradient}
           />
           
-          <SafeAreaView style={styles.heroContent}>
+          <View style={[styles.heroContent, { paddingTop: Math.max(insets.top, 20) }]}>
             <View style={styles.statusRow}>
               <View>
-                <Text style={[styles.greetingText, { color: colors.text, fontSize: 28 * scale }]}>
+                <Text 
+                  style={[styles.greetingText, { color: colors.text, fontSize: 28 * scale }]}
+                  maxFontSizeMultiplier={1.5}
+                >
                   {getGreeting()},
                 </Text>
-                <Text style={[styles.nameText, { color: colors.primary, fontSize: 32 * scale }]}>
+                <Text 
+                  style={[styles.nameText, { color: colors.primary, fontSize: 32 * scale }]}
+                  maxFontSizeMultiplier={1.5}
+                >
                   {profile.firstName || 'valued member'}
                 </Text>
               </View>
-              <BlurView intensity={isDark ? 40 : 60} style={styles.weatherGlass}>
+              <BlurView 
+                intensity={isDark ? 40 : 60} 
+                style={styles.weatherGlass}
+                accessible={true}
+                accessibilityLabel={`Weather in ${liveWeather.city}: ${liveWeather.temp}, ${liveWeather.icon.label}`}
+              >
                 <Ionicons name={liveWeather.icon.icon} size={28} color={liveWeather.icon.color} />
                 <View>
-                  <Text style={[styles.weatherTemp, { color: colors.text }]}>{liveWeather.temp}</Text>
-                  <Text style={{ color: colors.textSecondary, fontSize: 10, fontWeight: '700' }}>{liveWeather.city}</Text>
+                  <Text style={[styles.weatherTemp, { color: colors.text }]} maxFontSizeMultiplier={1.3}>{liveWeather.temp}</Text>
+                  <Text style={{ color: colors.textSecondary, fontSize: 10, fontWeight: '700' }} maxFontSizeMultiplier={1.2}>{liveWeather.city}</Text>
                 </View>
               </BlurView>
             </View>
 
-            <View style={styles.timeBadge}>
+            <View 
+              style={styles.timeBadge}
+              accessible={true}
+              accessibilityLabel={`Current date and time: ${new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} at ${time}`}
+            >
               <Ionicons name="time-outline" size={16} color={colors.textSecondary} />
-              <Text style={[styles.timeBadgeText, { color: colors.textSecondary }]}>
+              <Text style={[styles.timeBadgeText, { color: colors.textSecondary }]} maxFontSizeMultiplier={1.2}>
                 {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} • {time}
               </Text>
             </View>
-          </SafeAreaView>
+          </View>
         </View>
 
         <View style={styles.mainContent}>
@@ -288,54 +245,61 @@ export default function HomeScreen() {
                 colors={['#F59E0B', '#EF4444']}
                 start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
                 style={styles.streakCard}
+                accessible={true}
+                accessibilityLabel={`${streak} day medication streak!`}
+                accessibilityHint="Keep taking your pills every day to grow your streak."
               >
-                <Text style={styles.streakEmoji}>🔥</Text>
+                <Text style={styles.streakEmoji} accessible={false}>🔥</Text>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.streakTitle}>{streak}-Day Streak!</Text>
-                  <Text style={styles.streakSub}>All pills taken {streak} days in a row. Keep it up!</Text>
+                  <Text style={styles.streakTitle} maxFontSizeMultiplier={1.5}>{streak}-Day Streak!</Text>
+                  <Text style={styles.streakSub} maxFontSizeMultiplier={1.3}>All pills taken {streak} days in a row. Keep it up!</Text>
                 </View>
                 <View style={styles.streakBadge}>
-                  <Text style={styles.streakBadgeNum}>{streak}</Text>
-                  <Text style={styles.streakBadgeLabel}>days</Text>
+                  <Text style={styles.streakBadgeNum} maxFontSizeMultiplier={1.5}>{streak}</Text>
+                  <Text style={styles.streakBadgeLabel} maxFontSizeMultiplier={1.2}>days</Text>
                 </View>
               </LinearGradient>
             </Animated.View>
           )}
           {/* ── NEXT REMINDER ── */}
-          <LinearGradient
-            colors={colors.primaryGradient}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.primeCard}
-          >
-            <View style={styles.primeHeader}>
-              <View style={styles.primeIconContainer}>
-                <Ionicons name="notifications" size={24} color="#FFF" />
+            <LinearGradient
+              colors={colors.primaryGradient}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.primeCard}
+              accessible={true}
+              accessibilityLabel={nextMed ? `Next Reminder: ${nextMed.name}. Scheduled for ${pendingDose?.scheduled_time}` : "All medications taken for now."}
+            >
+              <View style={styles.primeHeader}>
+                <View style={styles.primeIconContainer}>
+                  <Ionicons name="notifications" size={24} color="#FFF" />
+                </View>
+                <Text style={styles.primeTitle} maxFontSizeMultiplier={1.5}>Next Reminder</Text>
               </View>
-              <Text style={styles.primeTitle}>Next Reminder</Text>
-            </View>
-            <Text style={styles.primeValue}>
-              {nextMed ? `${nextMed.name}` : 'All caught up!'}
-            </Text>
-            <Text style={styles.primeSub}>
-              {nextMed ? `Scheduled for ${pendingDose?.scheduled_time}` : 'Next dose tomorrow morning'}
-            </Text>
-            {nextMed && (
-              <TouchableOpacity 
-                style={styles.primeButton}
-                onPress={() => {
-                  setActiveMedication(nextMed);
-                  setShowReminderModal(true);
-                }}
-              >
-                <Text style={styles.primeButtonText}>View Details</Text>
-                <Ionicons name="arrow-forward" size={16} color={colors.primary} />
-              </TouchableOpacity>
-            )}
-          </LinearGradient>
+              <Text style={styles.primeValue} maxFontSizeMultiplier={1.5}>
+                {nextMed ? `${nextMed.name}` : 'All caught up!'}
+              </Text>
+              <Text style={styles.primeSub} maxFontSizeMultiplier={1.3}>
+                {nextMed ? `Scheduled for ${pendingDose?.scheduled_time}` : 'Next dose tomorrow morning'}
+              </Text>
+              {nextMed && (
+                <TouchableOpacity 
+                  style={styles.primeButton}
+                  onPress={() => {
+                    setActiveMedication(nextMed);
+                    setShowReminderModal(true);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`View details for ${nextMed.name}`}
+                >
+                  <Text style={styles.primeButtonText} maxFontSizeMultiplier={1.3}>View Details</Text>
+                  <Ionicons name="arrow-forward" size={16} color={colors.primary} />
+                </TouchableOpacity>
+              )}
+            </LinearGradient>
 
-          <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionTitle, { color: colors.text, fontSize: 18 * scale }]}>
+          <View style={styles.sectionHeader} accessible={true} accessibilityRole="header">
+            <Text style={[styles.sectionTitle, { color: colors.text, fontSize: 18 * scale }]} maxFontSizeMultiplier={1.5}>
               Daily Overview
             </Text>
           </View>
@@ -371,22 +335,89 @@ export default function HomeScreen() {
           <View style={styles.actionGrid}>
              <TouchableOpacity
               onPress={handleCallFamily}
-              style={[styles.bigAction, { backgroundColor: colors.success }]}
+              style={[styles.bigAction, { backgroundColor: colors.success, width: '100%' }]}
+              accessibilityRole="button"
+              accessibilityLabel="Call Family"
+              accessibilityHint="Initiates a phone call to your primary emergency contact."
             >
               <View style={styles.actionIconCircle}>
                 <Ionicons name="call" size={24} color="#FFF" />
               </View>
-              <Text style={styles.actionLabel}>Call Family</Text>
+              <Text style={styles.actionLabel} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={1.2}>Call Family</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => router.push('/food-scanner')}
+              style={[styles.bigAction, { backgroundColor: '#22C55E20', borderWidth: 1, borderColor: '#22C55E' }]}
+              accessibilityRole="button"
+              accessibilityLabel="Scan Food"
+              accessibilityHint="Use the camera to scan your meal and get health advice."
+            >
+              <View style={[styles.actionIconCircle, { backgroundColor: '#22C55E' }]}>
+                <Ionicons name="fast-food" size={24} color="#FFF" />
+              </View>
+              <Text style={[styles.actionLabel, { color: '#22C55E' }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={1.2}>Scan Food</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => router.push('/exercises')}
+              style={[styles.bigAction, { backgroundColor: '#10B98120', borderWidth: 1, borderColor: '#10B981' }]}
+              accessibilityRole="button"
+              accessibilityLabel="Daily Exercises"
+              accessibilityHint="Follow simple stretching and balance routines."
+            >
+              <View style={[styles.actionIconCircle, { backgroundColor: '#10B981' }]}>
+                <Ionicons name="fitness" size={24} color="#FFF" />
+              </View>
+              <Text style={[styles.actionLabel, { color: '#10B981' }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={1.2}>Exercises</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
               onPress={() => router.push('/settings')}
-              style={[styles.bigAction, { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }]}
+              style={[styles.bigAction, { backgroundColor: colors.card }]}
             >
-              <View style={[styles.actionIconCircle, { backgroundColor: colors.background }]}>
-                <Ionicons name="settings-outline" size={24} color={colors.text} />
+              <View style={[styles.actionIconCircle, { backgroundColor: colors.text + '20' }]}>
+                <Ionicons name="settings" size={24} color={colors.text} />
               </View>
-              <Text style={[styles.actionLabel, { color: colors.text }]}>Settings</Text>
+              <Text style={[styles.actionLabel, { color: colors.text }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={1.2}>Settings</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => router.push('/sleep')}
+              style={[styles.bigAction, { backgroundColor: '#6366F120', borderWidth: 1, borderColor: '#6366F1' }]}
+              accessibilityRole="button"
+              accessibilityLabel="Sleep Tracker"
+              accessibilityHint="Log and analyze your sleep patterns."
+            >
+              <View style={[styles.actionIconCircle, { backgroundColor: '#6366F1' }]}>
+                <Ionicons name="moon" size={24} color="#FFF" />
+              </View>
+              <Text style={[styles.actionLabel, { color: '#6366F1' }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={1.2}>Sleep</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => router.push('/pill-scanner')}
+              style={[styles.bigAction, { backgroundColor: '#6366F120', borderWidth: 1, borderColor: '#6366F1' }]}
+              accessibilityRole="button"
+              accessibilityLabel="Pill Identification"
+              accessibilityHint="Use the camera to identify your medication."
+            >
+              <View style={[styles.actionIconCircle, { backgroundColor: '#6366F1' }]}>
+                <Ionicons name="medical" size={24} color="#FFF" />
+              </View>
+              <Text style={[styles.actionLabel, { color: '#6366F1' }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={1.2}>Pill ID</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => router.push('/caregiver')}
+              style={[styles.bigAction, { backgroundColor: colors.primary + '20', borderWidth: 1, borderColor: colors.primary, borderStyle: 'dashed' }]}
+              accessibilityRole="button"
+              accessibilityLabel="Caregiver View"
+              accessibilityHint="Switch to the caregiver dashboard view."
+            >
+              <View style={[styles.actionIconCircle, { backgroundColor: colors.primary }]}>
+                <Ionicons name="stats-chart" size={24} color="#FFF" />
+              </View>
+              <Text style={[styles.actionLabel, { color: colors.primary }]} numberOfLines={1} adjustsFontSizeToFit maxFontSizeMultiplier={1.2}>Caregiver View</Text>
             </TouchableOpacity>
           </View>
 
@@ -396,6 +427,9 @@ export default function HomeScreen() {
           </View>
         </View>
 
+        {!profile?.isPremium && (
+          <AdBannerPlaceholder onPressPremium={() => setShowPremiumModal(true)} />
+        )}
         <View style={{ height: 100 }} />
       </ScrollView>
 
@@ -408,7 +442,7 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   scrollContent: { },
   heroContainer: {
-    height: 340,
+    height: 260,
     width: '100%',
     overflow: 'hidden',
   },
@@ -566,16 +600,19 @@ const styles = StyleSheet.create({
   },
   actionGrid: {
     flexDirection: 'row',
-    gap: Spacing.md,
+    flexWrap: 'wrap',
+    gap: 12,
     marginTop: Spacing.md,
+    justifyContent: 'space-between',
   },
   bigAction: {
-    flex: 1,
-    height: 120,
+    width: '48%',
+    height: 110,
     borderRadius: Radius.xl,
-    padding: Spacing.lg,
+    padding: 16,
     justifyContent: 'flex-end',
-    gap: 8,
+    alignItems: 'flex-start',
+    marginBottom: 4,
   },
   actionIconCircle: {
     width: 44,

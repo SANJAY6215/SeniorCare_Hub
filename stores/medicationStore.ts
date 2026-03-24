@@ -1,8 +1,15 @@
 import { create } from 'zustand';
-import { Platform } from 'react-native';
-import * as Notifications from 'expo-notifications';
+import { Platform, Alert } from 'react-native';
+import { notificationService } from '@/lib/notificationService';
 import { supabase } from '@/lib/supabase';
 import { useUserStore } from '@/stores/userStore';
+import { MedicationSchema, DoseLogSchema } from '@/lib/schemas';
+
+const sanitize = (str: string) => {
+  if (!str) return '';
+  // Trim and remove any HTML-like tags to prevent basic injection
+  return str.trim().replace(/<[^>]*>?/gm, '');
+};
 
 export type MedicationStatus = 'taken' | 'missed' | 'pending' | 'snoozed';
 
@@ -18,6 +25,8 @@ export interface Medication {
   pillImage?: string;
   refill_date?: string;
   sideEffects?: string;
+  pills_remaining?: number;
+  refill_threshold?: number;
 }
 
 export interface DoseLog {
@@ -46,11 +55,16 @@ interface MedicationStore {
   snoozeDose: (doseId: string, minutes: number) => void;
   setActiveMedication: (med: Medication | null) => void;
   setShowReminderModal: (show: boolean) => void;
+  refillMedication: (id: string, count: number) => Promise<void>;
   getTodayDoses: () => DoseLog[];
   getAdherencePercent: (days?: number) => number;
   getWeeklyAdherence: () => number[];
   getStreak: () => number;
+  fetchLogs: (days: number) => Promise<void>;
   scheduleNotifications: () => Promise<void>;
+  subscribeToDoses: () => void;
+  unsubscribeFromDoses: () => void;
+  channel: any;
 }
 
 export const useMedicationStore = create<MedicationStore>((set, get) => ({
@@ -59,14 +73,12 @@ export const useMedicationStore = create<MedicationStore>((set, get) => ({
   loading: false,
   activeMedication: null,
   showReminderModal: false,
+  channel: null,
 
   fetchMedications: async () => {
     set({ loading: true });
     
-    // Check role and target user ID
-    const profile = useUserStore.getState().profile;
-    if (!profile) return;
-    const targetUserId = profile.role === 'senior' ? profile.id : profile.linkedSeniorId;
+    const targetUserId = useUserStore.getState().getTargetUserId();
     if (!targetUserId) {
       set({ loading: false });
       return;
@@ -79,27 +91,30 @@ export const useMedicationStore = create<MedicationStore>((set, get) => ({
 
     if (meds) set({ medications: meds as Medication[] });
     
-    // Fetch logs for the last 7 days for the history view
+    // Fetch logs: Basic = 1 day (today), Premium = 7 days (standard history)
+    const isPremium = useUserStore.getState().profile?.isPremium;
+    const historyDays = isPremium ? 7 : 1;
+    
     const today = new Date();
-    const sevenDaysAgo = new Date(today);
-    sevenDaysAgo.setDate(today.getDate() - 7);
-    const sevenDaysAgoStr = sevenDaysAgo.toISOString().split('T')[0];
+    const startDate = new Date(today);
+    startDate.setDate(today.getDate() - (historyDays - 1));
+    const startDateStr = startDate.toISOString().split('T')[0];
 
     const { data: logs } = await supabase
       .from('dose_logs')
       .select('*')
       .eq('user_id', targetUserId)
-      .gte('date', sevenDaysAgoStr);
+      .gte('date', startDateStr);
     
     if (logs) set({ doseLogs: logs as DoseLog[] });
 
     // Auto-generate logs for today if they don't exist
     const todayStr = today.toISOString().split('T')[0];
-    const todayLogs = (logs || []).filter(l => l.date === todayStr);
-    const medsList = meds || [];
+    const todayLogs = (logs || []).filter((l: DoseLog) => l.date === todayStr);
+    const medsList = (meds || []) as Medication[];
     
     if (medsList.length > 0) {
-      const missingMeds = medsList.filter(m => !todayLogs.some(l => l.medication_id === m.id));
+      const missingMeds = medsList.filter((m: Medication) => !todayLogs.some((l: DoseLog) => l.medication_id === m.id));
       if (missingMeds.length > 0) {
         const newLogs = [];
         for (const med of missingMeds) {
@@ -116,7 +131,7 @@ export const useMedicationStore = create<MedicationStore>((set, get) => ({
         if (newLogs.length > 0) {
           const { data: createdLogs } = await supabase.from('dose_logs').insert(newLogs).select();
           if (createdLogs) {
-            set((state) => ({ doseLogs: [...state.doseLogs, ...(createdLogs as DoseLog[])] }));
+            set((state: MedicationStore) => ({ doseLogs: [...state.doseLogs, ...(createdLogs as DoseLog[])] }));
           }
         }
       }
@@ -124,22 +139,37 @@ export const useMedicationStore = create<MedicationStore>((set, get) => ({
 
     set({ loading: false });
     get().scheduleNotifications();
+    get().subscribeToDoses();
   },
 
-  addMedication: async (med) => {
-    const profile = useUserStore.getState().profile;
-    if (!profile) return;
-    const targetUserId = profile.role === 'senior' ? profile.id : profile.linkedSeniorId;
+  addMedication: async (med: Omit<Medication, 'id'>) => {
+    const targetUserId = useUserStore.getState().getTargetUserId();
     if (!targetUserId) return;
+
+    const sanitizedMed = {
+      ...med,
+      name: sanitize(med.name),
+      dosage: sanitize(med.dosage),
+      frequency: sanitize(med.frequency),
+      reason: sanitize(med.reason),
+      user_id: targetUserId,
+    };
+
+    const validation = MedicationSchema.safeParse(sanitizedMed);
+
+    if (!validation.success) {
+      console.error('Security/Validation Failure:', validation.error.message);
+      return;
+    }
 
     const { data: createdMed, error } = await supabase
       .from('medications')
-      .insert([{ ...med, user_id: targetUserId }])
+      .insert([validation.data])
       .select()
       .single();
 
     if (createdMed) {
-      set((state) => ({ medications: [...state.medications, createdMed as Medication] }));
+      set((state: MedicationStore) => ({ medications: [...state.medications, createdMed as Medication] }));
       
       // Generate today's logs for this new medication immediately
       const todayStr = new Date().toISOString().split('T')[0];
@@ -153,91 +183,156 @@ export const useMedicationStore = create<MedicationStore>((set, get) => ({
 
       const { data: doseLogs } = await supabase.from('dose_logs').insert(newLogs).select();
       if (doseLogs) {
-        set((state) => ({ doseLogs: [...state.doseLogs, ...(doseLogs as DoseLog[])] }));
+        set((state: MedicationStore) => ({ doseLogs: [...state.doseLogs, ...(doseLogs as DoseLog[])] }));
       }
       
       get().scheduleNotifications();
     }
   },
 
-  removeMedication: async (id) => {
+  removeMedication: async (id: string) => {
     const { error } = await supabase
       .from('medications')
       .delete()
       .eq('id', id);
 
     if (!error) {
-      set((state) => ({ medications: state.medications.filter((m) => m.id !== id) }));
+      set((state: MedicationStore) => ({ medications: state.medications.filter((m: Medication) => m.id !== id) }));
+      // Security Audit Logging
+      const targetUserId = useUserStore.getState().getTargetUserId();
+      await supabase.rpc('log_security_event', {
+        event_name: 'MEDICATION_REMOVAL',
+        details: `User removed medication ID: ${id}`,
+        user_id: targetUserId,
+        severity_level: 'info'
+      });
     }
   },
 
-  markTaken: async (doseId) => {
+  markTaken: async (doseId: string) => {
+    const state = get();
+    const dose = state.doseLogs.find((d: DoseLog) => d.id === doseId);
+    if (!dose) return;
+
+    const previousLogs = state.doseLogs;
+    const previousMeds = state.medications;
+
+    // OPTIMISTIC UPDATE: Update local state immediately
     const now = new Date().toTimeString().slice(0, 5);
-    const { error } = await supabase
+    const med = state.medications.find((m: Medication) => m.id === dose.medication_id);
+    const newCount = (med && med.pills_remaining !== undefined) ? Math.max(0, med.pills_remaining - 1) : undefined;
+
+    set((state: MedicationStore) => ({
+      doseLogs: state.doseLogs.map((d: DoseLog) =>
+        d.id === doseId ? { ...d, status: 'taken', actual_time: now } : d
+      ),
+      medications: state.medications.map((m: Medication) => 
+        (med && m.id === med.id && newCount !== undefined) ? { ...m, pills_remaining: newCount } : m
+      )
+    }));
+
+    // BACKEND SYNC
+    const { error: doseError } = await supabase
       .from('dose_logs')
       .update({ status: 'taken', actual_time: now })
       .eq('id', doseId);
 
-    if (!error) {
-      set((state) => ({
-        doseLogs: state.doseLogs.map((d) =>
-          d.id === doseId ? { ...d, status: 'taken', actual_time: now } : d
-        ),
-      }));
+    if (doseError) {
+      // ROLLBACK on failure
+      set({ doseLogs: previousLogs, medications: previousMeds });
+      Alert.alert('Sync Failed', 'Could not save medication status. Please check your internet connection.');
+      return;
+    }
+
+    if (med && newCount !== undefined) {
+      const { error: medError } = await supabase
+        .from('medications')
+        .update({ pills_remaining: newCount })
+        .eq('id', med.id);
+      
+      if (medError) {
+        console.error('Failed to sync pill count to backend:', medError);
+      }
     }
   },
 
-  markMissed: async (doseId) => {
+  refillMedication: async (id: string, count: number) => {
+    const state = get();
+    const med = state.medications.find((m: Medication) => m.id === id);
+    if (!med) return;
+
+    const newCount = (med.pills_remaining || 0) + count;
+    const previousMeds = state.medications;
+
+    // Optimistic Update
+    set((state: MedicationStore) => ({
+      medications: state.medications.map((m: Medication) => 
+        m.id === id ? { ...m, pills_remaining: newCount } : m
+      )
+    }));
+
+    const { error } = await supabase
+      .from('medications')
+      .update({ pills_remaining: newCount })
+      .eq('id', id);
+
+    if (error) {
+      set({ medications: previousMeds });
+      Alert.alert('Refill Failed', 'Could not sync the refill with the database.');
+    } else {
+      // Security Audit Logging
+      const targetUserId = useUserStore.getState().getTargetUserId();
+      await supabase.rpc('log_security_event', {
+        event_name: 'MEDICATION_REFILL',
+        details: `Medication ${med.name} refilled with ${count} units. New total: ${newCount}`,
+        user_id: targetUserId,
+        severity_level: 'info'
+      });
+    }
+  },
+
+  markMissed: async (doseId: string) => {
     const { error } = await supabase
       .from('dose_logs')
       .update({ status: 'missed' })
       .eq('id', doseId);
 
     if (!error) {
-      set((state) => ({
-        doseLogs: state.doseLogs.map((d) =>
+      set((state: MedicationStore) => ({
+        doseLogs: state.doseLogs.map((d: DoseLog) =>
           d.id === doseId ? { ...d, status: 'missed' } : d
         ),
       }));
     }
   },
 
-  snoozeDose: async (doseId, minutes) => {
+  snoozeDose: async (doseId: string, minutes: number) => {
     const newTime = new Date(Date.now() + minutes * 60 * 1000)
       .toTimeString()
       .slice(0, 5);
       
     // Reschedule notification
-    if (Platform.OS !== 'web') {
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title: '💊 Medication Snoozed',
-          body: `Reminder rescheduled for ${newTime}`,
-          data: { doseId },
-        },
-        trigger: { seconds: minutes * 60 },
-      });
-    }
+    await notificationService.scheduleSnooze(doseId, minutes, newTime);
 
-    set((state) => ({
-      doseLogs: state.doseLogs.map((d) =>
+    set((state: MedicationStore) => ({
+      doseLogs: state.doseLogs.map((d: DoseLog) =>
         d.id === doseId ? { ...d, status: 'snoozed', scheduled_time: newTime } : d
       ),
     }));
   },
 
-  setActiveMedication: (med) => set({ activeMedication: med }),
-  setShowReminderModal: (show) => set({ showReminderModal: show }),
+  setActiveMedication: (med: Medication | null) => set({ activeMedication: med }),
+  setShowReminderModal: (show: boolean) => set({ showReminderModal: show }),
 
   getTodayDoses: () => {
     const today = new Date().toISOString().split('T')[0];
-    return get().doseLogs.filter((d) => d.date === today);
+    return get().doseLogs.filter((d: DoseLog) => d.date === today);
   },
 
   getAdherencePercent: (days = 7) => {
     const logs = get().doseLogs;
     if (!logs.length) return 0;
-    const taken = logs.filter((d) => d.status === 'taken').length;
+    const taken = logs.filter((d: DoseLog) => d.status === 'taken').length;
     return Math.round((taken / logs.length) * 100);
   },
 
@@ -252,17 +347,16 @@ export const useMedicationStore = create<MedicationStore>((set, get) => ({
       d.setDate(today.getDate() - i);
       const dateStr = d.toISOString().split('T')[0];
       
-      const dayLogs = logs.filter((l) => l.date === dateStr);
+      const dayLogs = logs.filter((l: DoseLog) => l.date === dateStr);
       if (dayLogs.length === 0) {
         history.push(0);
       } else {
-        const taken = dayLogs.filter((l) => l.status === 'taken').length;
+        const taken = dayLogs.filter((l: DoseLog) => l.status === 'taken').length;
         history.push(Math.round((taken / dayLogs.length) * 100));
       }
     }
     return history;
   },
-
   getStreak: () => {
     const logs = get().doseLogs;
     if (!logs.length) return 0;
@@ -273,41 +367,84 @@ export const useMedicationStore = create<MedicationStore>((set, get) => ({
       const d = new Date(today);
       d.setDate(d.getDate() - i);
       const dateStr = d.toISOString().split('T')[0];
-      const dayLogs = logs.filter((l) => l.date === dateStr);
-      if (!dayLogs.length) { if (i === 0) continue; break; } // no data today yet = don't break
-      const allTaken = dayLogs.every((l) => l.status === 'taken');
+      const dayLogs = logs.filter((l: DoseLog) => l.date === dateStr);
+      if (!dayLogs.length) { if (i === 0) continue; break; }
+      const allTaken = dayLogs.every((l: DoseLog) => l.status === 'taken');
       if (allTaken) streak++;
       else break;
     }
     return streak;
   },
 
-  scheduleNotifications: async () => {
-    if (Platform.OS === 'web') return;
-    
-    // Clear existing
-    await Notifications.cancelAllScheduledNotificationsAsync();
-    
-    const meds = get().medications;
-    for (const med of meds) {
-      for (const time of med.times) {
-        const [hour, minute] = time.split(':').map(Number);
-        
-        await Notifications.scheduleNotificationAsync({
-          content: {
-            title: `💊 Time for ${med.name}`,
-            body: `Dosage: ${med.dosage}. Don't forget to take your medication!`,
-            data: { medId: med.id },
-            sound: true,
-            priority: Notifications.AndroidNotificationPriority.HIGH,
-          },
-          trigger: {
-            hour,
-            minute,
-            repeats: true,
-          },
-        });
-      }
+  fetchLogs: async (days: number) => {
+    const targetUserId = useUserStore.getState().getTargetUserId();
+    if (!targetUserId) return;
+
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+    const startDateStr = startDate.toISOString().split('T')[0];
+
+    const { data: logs, error } = await supabase
+      .from('dose_logs')
+      .select('*')
+      .eq('user_id', targetUserId)
+      .gte('date', startDateStr)
+      .order('date', { ascending: false });
+
+    if (logs && !error) {
+      set({ doseLogs: logs as DoseLog[] });
     }
   },
+
+  scheduleNotifications: async () => {
+    const meds = get().medications;
+    await notificationService.scheduleMedicationReminders(meds);
+  },
+
+  subscribeToDoses: () => {
+    const targetUserId = useUserStore.getState().getTargetUserId();
+    if (!targetUserId) return;
+
+    if (get().channel) supabase.removeChannel(get().channel);
+
+    const newChannel = supabase
+      .channel(`dose_logs_${targetUserId}`)
+      .on(
+        'postgres_changes',
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'dose_logs',
+          filter: `user_id=eq.${targetUserId}`
+        },
+        (payload: any) => {
+          const { eventType, new: newDose, old: oldDose } = payload;
+          set((state: MedicationStore) => {
+            if (eventType === 'INSERT') {
+              if (state.doseLogs.find((d: DoseLog) => d.id === (newDose as DoseLog).id)) return state;
+              return { doseLogs: [...state.doseLogs, newDose as DoseLog] };
+            }
+            if (eventType === 'UPDATE') {
+              return {
+                doseLogs: state.doseLogs.map((d: DoseLog) => d.id === (newDose as DoseLog).id ? newDose as DoseLog : d)
+              };
+            }
+            if (eventType === 'DELETE') {
+              return { doseLogs: state.doseLogs.filter((d: DoseLog) => d.id !== (oldDose as any).id) };
+            }
+            return state;
+          });
+        }
+      )
+      .subscribe();
+
+    set({ channel: newChannel });
+  },
+
+  unsubscribeFromDoses: () => {
+    if (get().channel) {
+      supabase.removeChannel(get().channel);
+      set({ channel: null });
+    }
+  }
 }));

@@ -24,11 +24,14 @@ import Animated, {
 
 import { useTheme } from '@/hooks/useTheme';
 import { useTextScale } from '@/hooks/useTheme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useUserStore } from '@/stores/userStore';
 import { useMessageStore } from '@/stores/messageStore';
 import { Spacing, Radius } from '@/constants/Typography';
 import { Colors } from '@/constants/Colors';
 import ChatInterface from '@/components/family/ChatInterface';
+import PremiumModal from '@/components/premium/PremiumModal';
+import AdBannerPlaceholder from '@/components/common/AdBannerPlaceholder';
 
   // Mock messages removed, using real-time store
 
@@ -40,7 +43,9 @@ export default function FamilyScreen() {
   const { profile, updateProfile } = useUserStore();
   const router = useRouter();
   const { messages, sendMessage } = useMessageStore();
+  const [showPremiumModal, setShowPremiumModal] = useState(false);
 
+  const insets = useSafeAreaInsets();
   const [showAddContact, setShowAddContact] = useState(false);
   const [newName, setNewName] = useState('');
   const [newPhone, setNewPhone] = useState('');
@@ -270,15 +275,29 @@ export default function FamilyScreen() {
             <Text style={styles.videoSub}>Start a face-to-face conversation</Text>
           </View>
           <TouchableOpacity
-            onPress={() => router.push('/video-call')}
+            onPress={() => {
+              if (profile?.isPremium) {
+                Alert.alert("Video Calling", "High-quality video calling is a premium feature. We are currently integrating this with our medical network. Coming soon!");
+              } else {
+                setShowPremiumModal(true);
+              }
+            }}
             style={styles.videoStartBtn}
           >
             <Text style={styles.videoBtnText}>Start</Text>
           </TouchableOpacity>
         </LinearGradient>
 
+        {!profile?.isPremium && (
+          <AdBannerPlaceholder onPressPremium={() => setShowPremiumModal(true)} />
+        )}
         <View style={{ height: 100 }} />
       </ScrollView>
+
+      <PremiumModal 
+        visible={showPremiumModal} 
+        onClose={() => setShowPremiumModal(false)}
+      />
 
       {/* Add Contact Modal */}
       <Modal visible={showAddContact} transparent animationType="slide">
@@ -286,7 +305,7 @@ export default function FamilyScreen() {
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.modalBg}
         >
-          <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
+          <View style={[styles.modalContent, { backgroundColor: colors.surface, paddingBottom: Math.max(insets.bottom, 20) }]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: colors.text }]}>Add Contact</Text>
               <TouchableOpacity onPress={() => setShowAddContact(false)}>

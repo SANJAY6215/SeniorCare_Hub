@@ -16,6 +16,7 @@ import { Pedometer } from 'expo-sensors';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
 import Animated, { 
   FadeInDown, 
   FadeInRight,
@@ -30,6 +31,9 @@ import VitalTrendChart from '@/components/health/VitalTrendChart';
 import AISymptomChecker from '@/components/health/AISymptomChecker';
 import VoiceRecognitionSheet from '@/components/health/VoiceRecognitionSheet';
 import { Colors } from '@/constants/Colors';
+import PremiumModal from '@/components/premium/PremiumModal';
+import AdBannerPlaceholder from '@/components/common/AdBannerPlaceholder';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Spacing, Radius } from '@/constants/Typography';
 
 type VitalType = 'bp' | 'hr' | 'weight' | 'glucose' | 'spo2';
@@ -86,6 +90,49 @@ const calculateStatus = (type: VitalType, value: string): string => {
   }
 };
 
+function HealthInsightCard({ readings }: { readings: VitalReading[] }) {
+  const { colors } = useTheme();
+  const scale = useTextScale();
+  
+  const hasCritical = readings.some(r => r.status === 'critical');
+  const hasHigh = readings.some(r => r.status === 'high' || r.status === 'elevated');
+  
+  let config: { title: string; sub: string; icon: keyof typeof Ionicons.glyphMap; color: string } = {
+    title: "All vitals look stable",
+    sub: "Your recent readings are within normal ranges. Great job!",
+    icon: "checkmark-circle",
+    color: colors.success
+  };
+
+  if (hasCritical) {
+    config = {
+      title: "Action Required",
+      sub: "Some readings are in a critical range. Please consult your physician.",
+      icon: "alert-circle" as const,
+      color: colors.danger
+    };
+  } else if (hasHigh) {
+    config = {
+      title: "Daily Insight",
+      sub: "Vitals are slightly elevated today. Ensure you've taken your medications.",
+      icon: "information-circle" as const,
+      color: colors.warning
+    };
+  }
+
+  return (
+    <Animated.View entering={FadeInDown.delay(150).springify()} style={[styles.insightCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <View style={[styles.insightIconBg, { backgroundColor: config.color + '15' }]}>
+        <Ionicons name={config.icon} size={28} color={config.color} />
+      </View>
+      <View style={{ flex: 1, gap: 2 }}>
+        <Text style={[styles.insightTitle, { color: colors.text, fontSize: 16 * scale }]}>{config.title}</Text>
+        <Text style={[styles.insightSub, { color: colors.textSecondary, fontSize: 13 * scale }]}>{config.sub}</Text>
+      </View>
+    </Animated.View>
+  );
+}
+
 function VitalCard({ type, latest, index }: { type: VitalType; latest: VitalReading | null; index: number }) {
   const { colors, isDark } = useTheme();
   const scale = useTextScale();
@@ -106,6 +153,9 @@ function VitalCard({ type, latest, index }: { type: VitalType; latest: VitalRead
       entering={FadeInDown.delay(index * 100).springify()}
       layout={Layout.springify()}
       style={[styles.vitalCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+      accessible={true}
+      accessibilityRole="summary"
+      accessibilityLabel={`Vital: ${cfg.label}. Latest reading: ${latest ? `${latest.value} ${cfg.unit}` : 'No data yet'}. Status: ${dynamicStatus.toLowerCase()}.`}
     >
       <LinearGradient
         colors={[cfg.color, cfg.color + 'AA']}
@@ -115,16 +165,16 @@ function VitalCard({ type, latest, index }: { type: VitalType; latest: VitalRead
       </LinearGradient>
       
       <View style={styles.vitalInfo}>
-        <Text style={[styles.vitalLabel, { color: colors.textSecondary, fontSize: 13 * scale }]}>{cfg.label}</Text>
-        <Text style={[styles.vitalValue, { color: latest ? colors.text : colors.textMuted, fontSize: 20 * scale }]}>
+        <Text style={[styles.vitalLabel, { color: colors.textSecondary, fontSize: 13 * scale }]} maxFontSizeMultiplier={1.5}>{cfg.label}</Text>
+        <Text style={[styles.vitalValue, { color: latest ? colors.text : colors.textMuted, fontSize: 20 * scale }]} maxFontSizeMultiplier={1.5}>
           {latest ? `${latest.value} ` : '— '}
-          <Text style={{ fontSize: 13, fontWeight: '600', color: colors.textSecondary }}>{cfg.unit}</Text>
+          <Text style={{ fontSize: 13, fontWeight: '600', color: colors.textSecondary }} maxFontSizeMultiplier={1.2}>{cfg.unit}</Text>
         </Text>
-        <Text style={[styles.vitalNormal, { color: colors.textMuted, fontSize: 11 * scale }]}>Normal: {cfg.normal}</Text>
+        <Text style={[styles.vitalNormal, { color: colors.textMuted, fontSize: 11 * scale }]} maxFontSizeMultiplier={1.2}>Normal: {cfg.normal}</Text>
       </View>
 
       <View style={[styles.statusBadge, { backgroundColor: statusColor + '15' }]}>
-        <Text style={[styles.statusText, { color: statusColor }]}>
+        <Text style={[styles.statusText, { color: statusColor }]} maxFontSizeMultiplier={1.2}>
            {dynamicStatus}
         </Text>
       </View>
@@ -135,8 +185,11 @@ function VitalCard({ type, latest, index }: { type: VitalType; latest: VitalRead
 export default function HealthScreen() {
   const { colors, isDark } = useTheme();
   const scale = useTextScale();
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { readings, getLatest, addReading, fetchVitals } = useVitalsStore();
-  const { session, profile } = useUserStore();
+  const { session, profile, updateProfile } = useUserStore();
+  const [showPremiumModal, setShowPremiumModal] = useState(false);
   const [activeInput, setActiveInput] = useState<VitalType | null>(null);
   const [inputValue, setInputValue] = useState('');
   const [showAIChecker, setShowAIChecker] = useState(false);
@@ -201,9 +254,14 @@ export default function HealthScreen() {
       if (await Pedometer.isAvailableAsync()) {
         const start = new Date(); start.setHours(0,0,0,0);
         try {
-          const past = await Pedometer.getStepCountAsync(start, new Date());
-          if (past) setStepCount(past.steps);
-        } catch (e) { console.log(e); }
+          // getStepCountAsync for historical data is currently not supported by Expo on most Android setups
+          if (Platform.OS === 'ios') {
+            const past = await Pedometer.getStepCountAsync(start, new Date());
+            if (past) setStepCount(past.steps);
+          }
+        } catch (e) {
+          console.log("Pedometer past steps error:", e);
+        }
 
         subscription = Pedometer.watchStepCount(res => {
           setStepCount(prev => prev + 1); // Mock trigger bump
@@ -235,7 +293,30 @@ export default function HealthScreen() {
       status: calculatedStatus.toLowerCase(),
     });
 
-    Alert.alert('✅ Logged!', `${cfg.label} saved successfully.`);
+    if (activeInput === 'bp') {
+      const parts = inputValue.split('/');
+      const systolic = parseInt(parts[0]);
+      const diastolic = parseInt(parts[1]);
+      
+      if (systolic >= 140 || diastolic >= 90) {
+        Alert.alert(
+          '⚠️ High Blood Pressure Detected',
+          'Your reading is high. To help bring it back to normal, consider these dietary adjustments:\n\n' +
+          '✅ INCREASE: Leafy greens (spinach, kale), Berries, Bananas, Oatmeal, and Lentils.\n' +
+          '❌ REDUCE: Salt (sodium), Processed meats, Pickles, and Canned soups.\n\n' +
+          'Would you like to scan your next meal for a health check?',
+          [
+            { text: 'Later', style: 'cancel' },
+            { text: 'Scan Food 📸', onPress: () => router.push('/food-scanner') }
+          ]
+        );
+      } else {
+        Alert.alert('✅ Logged!', `${cfg.label} saved successfully.`);
+      }
+    } else {
+      Alert.alert('✅ Logged!', `${cfg.label} saved successfully.`);
+    }
+
     setInputValue('');
     setActiveInput(null);
   };
@@ -261,70 +342,105 @@ export default function HealthScreen() {
   const hrLabels = hrReadings.map((r) => new Date(r.measured_at).toLocaleDateString([], { month: 'numeric', day: 'numeric' }));
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+        <PremiumModal 
+          visible={showPremiumModal} 
+          onClose={() => setShowPremiumModal(false)}
+        />
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           {/* Header */}
-          <Animated.View entering={FadeInDown.duration(400)} style={styles.header}>
-            <Text style={[styles.title, { color: colors.text, fontSize: 32 * scale }]}>Health Dashboard</Text>
-            <Text style={[styles.subtitle, { color: colors.textSecondary, fontSize: 15 * scale }]}>
+          <Animated.View entering={FadeInDown.duration(400)} style={[styles.header, { paddingTop: Math.max(insets.top, 20) }]} accessible={true} accessibilityRole="header">
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.title, { color: colors.text, fontSize: 32 * scale }]} maxFontSizeMultiplier={1.5}>Health</Text>
+              <Text style={[styles.subtitle, { color: colors.textSecondary, fontSize: 15 * scale }]} maxFontSizeMultiplier={1.3}>Real-time monitoring & AI triage</Text>
+            </View>
+            {profile?.isPremium && (
+              <TouchableOpacity 
+                onPress={() => router.push('/premium-hub')}
+                style={[styles.premiumBadge, { backgroundColor: colors.primary + '15', borderColor: colors.primary + '30' }]}
+              >
+                <Ionicons name="star" size={16} color={colors.primary} />
+                <Text style={[styles.premiumBadgeText, { color: colors.primary }]}>Premium Hub</Text>
+              </TouchableOpacity>
+            )}
+          </Animated.View>
+          <Animated.View entering={FadeInDown.duration(400)} style={{ marginBottom: Spacing.xl }}>
+            <Text style={[styles.subtitle, { color: colors.textSecondary, fontSize: 15 * scale }]} maxFontSizeMultiplier={1.3}>
               {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
             </Text>
           </Animated.View>
 
           {/* AI Symptom Checker Button */}
           <Animated.View entering={FadeInDown.delay(100).springify()} style={{ marginBottom: Spacing.xl }}>
-            <TouchableOpacity onPress={() => setShowAIChecker(true)}>
+            <TouchableOpacity 
+              onPress={() => {
+                if (profile?.isPremium) setShowAIChecker(true);
+                else setShowPremiumModal(true);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="AI Symptom Triage"
+              accessibilityHint="Describe your symptoms to receive instant health advice from our AI."
+            >
               <LinearGradient colors={colors.primaryGradient} style={styles.aiCard} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
-                <View style={styles.aiIconCircle}>
+                <View style={styles.aiIconCircle} accessible={false}>
                   <Ionicons name="sparkles" size={28} color={colors.primary} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.aiCardTitle}>AI Symptom Triage</Text>
-                  <Text style={styles.aiCardSub}>Describe how you feel for instant advice</Text>
+                  <Text style={styles.aiCardTitle} maxFontSizeMultiplier={1.5}>AI Symptom Triage</Text>
+                  <Text style={styles.aiCardSub} maxFontSizeMultiplier={1.3}>Describe how you feel for instant advice</Text>
                 </View>
                 <Ionicons name="chevron-forward" size={24} color="#FFF" />
               </LinearGradient>
             </TouchableOpacity>
           </Animated.View>
+          
+          <HealthInsightCard readings={readings} />
 
           {profile?.role === 'senior' && (
             <>
               {/* Log New Reading */}
               <Text style={[styles.sectionTitle, { color: colors.text, fontSize: 18 * scale }]}>Log New Reading</Text>
-              <View style={styles.logGrid}>
-                {(Object.keys(vitalConfig) as VitalType[]).map((type) => {
-                  const cfg = vitalConfig[type];
-                  const active = activeInput === type;
-                  return (
-                    <TouchableOpacity
-                      key={type}
-                      onPress={() => { setActiveInput(active ? null : type); setInputValue(''); }}
-                       style={[
-                        styles.logChip, 
-                        { 
-                          backgroundColor: active ? cfg.color : colors.surface, 
-                          borderColor: active ? cfg.color : colors.border,
-                          elevation: active ? 4 : 0,
-                        }
-                      ]}
-                    >
-                      <Ionicons name={cfg.icon} size={18} color={active ? '#FFF' : cfg.color} />
-                      <Text style={[styles.logChipText, { color: active ? '#FFF' : colors.text, fontSize: 13 * scale }]}>{cfg.label}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
+                <View style={styles.logGrid}>
+                  {(Object.keys(vitalConfig) as VitalType[]).map((type) => {
+                    const cfg = vitalConfig[type];
+                    const active = activeInput === type;
+                    return (
+                      <TouchableOpacity
+                        key={type}
+                        onPress={() => { setActiveInput(active ? null : type); setInputValue(''); }}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Log ${cfg.label}`}
+                        accessibilityState={{ selected: active }}
+                        style={[
+                          styles.logChip, 
+                          { 
+                            backgroundColor: active ? cfg.color : colors.surface, 
+                            borderColor: active ? cfg.color : colors.border,
+                            elevation: active ? 4 : 0,
+                          }
+                        ]}
+                      >
+                        <Ionicons name={cfg.icon} size={18} color={active ? '#FFF' : cfg.color} />
+                        <Text style={[styles.logChipText, { color: active ? '#FFF' : colors.text, fontSize: 13 * scale }]} maxFontSizeMultiplier={1.3}>{cfg.label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
 
               {/* Voice Dictation Button */}
               <TouchableOpacity
                 onPress={() => {
-                  setShowVoiceModal(true);
+                  if (profile?.isPremium) setShowVoiceModal(true);
+                  else setShowPremiumModal(true);
                 }}
+                accessibilityRole="button"
+                accessibilityLabel="Log by voice"
+                accessibilityHint="Say something like: My blood pressure is 120 over 80."
                 style={[styles.voiceBtn, { backgroundColor: colors.primary + '15', borderColor: colors.primary }]}
               >
                 <Ionicons name="mic" size={22} color={colors.primary} />
-                <Text style={[styles.voiceBtnText, { color: colors.primary, fontSize: 15 * scale }]}>Voice Log</Text>
+                <Text style={[styles.voiceBtnText, { color: colors.primary, fontSize: 15 * scale }]} maxFontSizeMultiplier={1.5}>Voice Log</Text>
               </TouchableOpacity>
 
               {activeInput && (
@@ -367,12 +483,14 @@ export default function HealthScreen() {
                 colors={['#8B5CF6', '#6D28D9']}
                 start={{x:0, y:0}} end={{x:1, y:1}}
                 style={[styles.stepsCard, { elevation: 6, shadowColor: '#8B5CF6' }]}
+                accessible={true}
+                accessibilityLabel={`Daily Activity: ${stepCount.toLocaleString()} steps taken today.`}
               >
                 <View style={styles.stepsInfo}>
-                  <Text style={[styles.stepsTitle, { color: 'rgba(255,255,255,0.8)' }]}>Daily Activity</Text>
-                  <Text style={styles.stepsCount}>{stepCount.toLocaleString()} <Text style={styles.stepsLabel}>steps</Text></Text>
+                  <Text style={[styles.stepsTitle, { color: 'rgba(255,255,255,0.8)' }]} maxFontSizeMultiplier={1.3}>Daily Activity</Text>
+                  <Text style={styles.stepsCount} maxFontSizeMultiplier={1.5}>{stepCount.toLocaleString()} <Text style={styles.stepsLabel}>steps</Text></Text>
                 </View>
-                <View style={styles.stepsIconBg}>
+                <View style={styles.stepsIconBg} accessible={false}>
                   <Ionicons name="walk" size={36} color="#FFF" />
                 </View>
               </LinearGradient>
@@ -397,6 +515,21 @@ export default function HealthScreen() {
               color="#F59E0B"
             />
           </ScrollView>
+
+          {/* Premium Report Button */}
+          <TouchableOpacity 
+            onPress={() => {
+              if (profile?.isPremium) Alert.alert("Weekly Report", "Your AI weekly report is being generated. You will receive a notification when it is ready.");
+              else setShowPremiumModal(true);
+            }}
+            style={[styles.reportBtn, { backgroundColor: colors.surface, borderColor: profile?.isPremium ? colors.primary : colors.border }]}
+          >
+            <Ionicons name="document-text" size={20} color={profile?.isPremium ? colors.primary : colors.textMuted} />
+            <Text style={[styles.reportBtnText, { color: profile?.isPremium ? colors.primary : colors.textMuted }]}>
+              {profile?.isPremium ? "View Weekly Health Report" : "Unlock Weekly AI Reports"}
+            </Text>
+            {!profile?.isPremium && <Ionicons name="lock-closed" size={14} color={colors.textMuted} />}
+          </TouchableOpacity>
 
           {/* Current Vitals */}
           <Text style={[styles.sectionTitle, { color: colors.text, fontSize: 18 * scale, marginTop: Spacing.xl }]}>Vital Statistics</Text>
@@ -426,6 +559,10 @@ export default function HealthScreen() {
             </>
           )}
 
+          {!profile?.isPremium && (
+            <AdBannerPlaceholder onPressPremium={() => setShowPremiumModal(true)} />
+          )}
+
           <View style={{ height: 100 }} />
         </ScrollView>
       </KeyboardAvoidingView>
@@ -446,7 +583,7 @@ export default function HealthScreen() {
           setTimeout(() => setShowVoiceModal(false), 1500);
         }}
       />
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -498,5 +635,51 @@ const styles = StyleSheet.create({
   voiceActions: { flexDirection: 'row', gap: Spacing.md },
   voiceCancel: { flex: 1, height: 52, alignItems: 'center', justifyContent: 'center', borderRadius: Radius.full, borderWidth: 1 },
   voiceConfirm: { flex: 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 52, borderRadius: Radius.full },
+  reportBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    marginTop: Spacing.md,
+    padding: Spacing.md,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+  },
+  reportBtnText: {
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  premiumBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+  },
+  premiumBadgeText: {
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  syncedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginTop: 4,
+  },
+  syncedText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  insightCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md, padding: Spacing.lg, borderRadius: Radius.xl, borderWidth: 1, marginBottom: Spacing.xl, elevation: 2, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 10 },
+  insightIconBg: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center' },
+  insightTitle: { fontWeight: '800' },
+  insightSub: { fontWeight: '500', opacity: 0.7, lineHeight: 18 },
 });
 

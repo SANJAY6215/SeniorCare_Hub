@@ -32,8 +32,21 @@ function AppointmentCard({ appt, index }: { appt: Appointment; index: number }) 
   const { colors, isDark } = useTheme();
   const scale = useTextScale();
   
-  // Determine if upcoming based on UTC date comparison
-  const isUpcoming = new Date(appt.date).getTime() > Date.now();
+  // Determine if upcoming based on status and UTC date comparison
+  const isUpcoming = appt.status !== 'visited' && new Date(appt.date).getTime() > Date.now();
+  const isVisited = appt.status === 'visited';
+  const { deleteAppointment, updateAppointmentStatus } = useAppointmentStore();
+
+  const handleDelete = () => {
+    Alert.alert(
+      'Delete Visit',
+      'Are you sure you want to delete this visit?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => deleteAppointment(appt.id) },
+      ]
+    );
+  };
 
   return (
     <Animated.View
@@ -59,6 +72,11 @@ function AppointmentCard({ appt, index }: { appt: Appointment; index: number }) 
             <Text style={[styles.statusText, { color: colors.primary }]}>UPCOMING</Text>
           </View>
         )}
+        {isVisited && (
+          <View style={[styles.statusBadge, { backgroundColor: colors.success + '15' }]}>
+            <Text style={[styles.statusText, { color: colors.success }]}>VISITED</Text>
+          </View>
+        )}
       </View>
 
       <View style={styles.apptDetails}>
@@ -79,39 +97,68 @@ function AppointmentCard({ appt, index }: { appt: Appointment; index: number }) 
         )}
       </View>
 
-      {isUpcoming && (
-        <View style={styles.apptActions}>
+      <View style={styles.apptActions}>
+        {isUpcoming && (
+          <>
+            <TouchableOpacity
+              onPress={() => updateAppointmentStatus(appt.id, 'visited')}
+              style={[styles.actionBtn, { backgroundColor: colors.success + '15' }]}
+            >
+              <Ionicons name="checkmark-done" size={18} color={colors.success} />
+              <Text style={[styles.actionBtnText, { color: colors.success }]}>Visited</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => {
+                if (appt.phone) {
+                  Linking.openURL(`tel:${appt.phone}`).catch(() => 
+                    Alert.alert('Error', 'Could not open phone dialer')
+                  );
+                }
+              }}
+              style={[styles.actionBtn, { backgroundColor: colors.primary + '15' }]}
+            >
+              <Ionicons name="call" size={18} color={colors.primary} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={handleDelete}
+              style={[styles.actionBtn, { backgroundColor: colors.danger + '15', flex: 0, width: 48 }]}
+            >
+              <Ionicons name="trash" size={18} color={colors.danger} />
+            </TouchableOpacity>
+          </>
+        )}
+
+        {isVisited && (
+          <>
+            <TouchableOpacity
+              onPress={() => updateAppointmentStatus(appt.id, 'pending')}
+              style={[styles.actionBtn, { backgroundColor: colors.warning + '15' }]}
+            >
+              <Ionicons name="time" size={18} color={colors.warning} />
+              <Text style={[styles.actionBtnText, { color: colors.warning }]}>Need to Visit</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              onPress={handleDelete}
+              style={[styles.actionBtn, { backgroundColor: colors.danger + '15', flex: 0, width: 48 }]}
+            >
+              <Ionicons name="trash" size={18} color={colors.danger} />
+            </TouchableOpacity>
+          </>
+        )}
+
+        {!isUpcoming && !isVisited && (
           <TouchableOpacity
-            onPress={() => {
-              if (appt.phone) {
-                Linking.openURL(`tel:${appt.phone}`).catch(() => 
-                  Alert.alert('Error', 'Could not open phone dialer')
-                );
-              }
-            }}
-            style={[styles.actionBtn, { backgroundColor: colors.success + '15' }]}
+            onPress={handleDelete}
+            style={[styles.actionBtn, { backgroundColor: colors.danger + '15' }]}
           >
-            <Ionicons name="call" size={18} color={colors.success} />
-            <Text style={[styles.actionBtnText, { color: colors.success }]}>Call</Text>
+            <Ionicons name="trash" size={18} color={colors.danger} />
+            <Text style={[styles.actionBtnText, { color: colors.danger }]}>Delete History</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => {
-              const url = Platform.select({
-                ios: `maps:0,0?q=${encodeURIComponent(appt.location)}`,
-                android: `geo:0,0?q=${encodeURIComponent(appt.location)}`,
-                default: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(appt.location)}`
-              });
-              Linking.openURL(url).catch(() => 
-                Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(appt.location)}`)
-              );
-            }}
-            style={[styles.actionBtn, { backgroundColor: colors.primary + '15' }]}
-          >
-            <Ionicons name="navigate" size={18} color={colors.primary} />
-            <Text style={[styles.actionBtnText, { color: colors.primary }]}>Directions</Text>
-          </TouchableOpacity>
-        </View>
-      )}
+        )}
+      </View>
     </Animated.View>
   );
 }
@@ -167,8 +214,8 @@ export default function AppointmentsScreen() {
     }
   };
 
-  const upcoming = appointments.filter((a) => new Date(a.date).getTime() > Date.now());
-  const past = appointments.filter((a) => new Date(a.date).getTime() <= Date.now());
+  const upcoming = appointments.filter((a) => a.status !== 'visited' && new Date(a.date).getTime() > Date.now());
+  const past = appointments.filter((a) => a.status === 'visited' || new Date(a.date).getTime() <= Date.now());
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
@@ -218,8 +265,17 @@ export default function AppointmentsScreen() {
         ) : (
           <>
             <Text style={[styles.sectionTitle, { color: colors.text, fontSize: 18 * scale }]}>Upcoming</Text>
-            {upcoming.length === 0 && <Text style={{ color: colors.textMuted, marginBottom: Spacing.xl }}>No upcoming visits scheduled.</Text>}
-            {upcoming.map((a, i) => <AppointmentCard key={a.id} appt={a} index={i} />)}
+            {upcoming.length === 0 ? (
+              <Animated.View entering={FadeInDown.delay(200)} style={styles.emptyState}>
+                <View style={[styles.emptyIconBg, { backgroundColor: colors.primary + '10' }]}>
+                   <Ionicons name="calendar-outline" size={40} color={colors.primary} />
+                </View>
+                <Text style={[styles.emptyTitle, { color: colors.text, fontSize: 18 * scale }]}>No upcoming visits</Text>
+                <Text style={[styles.emptySub, { color: colors.textSecondary }]}>Schedule your next check-up or medical visit.</Text>
+              </Animated.View>
+            ) : (
+              upcoming.map((a, i) => <AppointmentCard key={a.id} appt={a} index={i} />)
+            )}
 
             <Text style={[styles.sectionTitle, { color: colors.textSecondary, fontSize: 18 * scale, marginTop: Spacing.xl }]}>History</Text>
             {past.length === 0 && <Text style={{ color: colors.textMuted }}>No past visits.</Text>}
@@ -317,5 +373,9 @@ const styles = StyleSheet.create({
   input: { minHeight: 50, borderWidth: 1, borderRadius: Radius.lg, paddingHorizontal: 16, fontWeight: '500', paddingVertical: 10 },
   saveBtn: { height: 50, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center', marginTop: Spacing.xl },
   saveBtnText: { color: '#FFF', fontSize: 16, fontWeight: '700', letterSpacing: 0.5 },
+  emptyState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 40, gap: 12 },
+  emptyIconBg: { width: 80, height: 80, borderRadius: 40, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
+  emptyTitle: { fontWeight: '800' },
+  emptySub: { textAlign: 'center', opacity: 0.6, fontSize: 14, paddingHorizontal: 40 },
 });
 

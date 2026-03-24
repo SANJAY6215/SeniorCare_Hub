@@ -6,6 +6,16 @@ CREATE TABLE profiles (
   phone TEXT,
   age INTEGER,
   gender TEXT,
+  is_premium BOOLEAN DEFAULT false,
+  sound_enabled BOOLEAN DEFAULT true,
+  vibration_enabled BOOLEAN DEFAULT true,
+  voice_assist_enabled BOOLEAN DEFAULT true,
+  family_code TEXT,
+  linked_senior_id UUID,
+  dietary_profile JSONB,
+  last_check_in TEXT,
+  check_in_status TEXT,
+  expo_push_token TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 

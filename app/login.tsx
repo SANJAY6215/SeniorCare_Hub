@@ -36,6 +36,28 @@ export default function LoginScreen() {
     }
 
     setLoading(true);
+    
+    // 1. Rate Limiting Check (Pre-auth) — fail-open: if the DB function
+    //    is missing or errors, we allow the login to proceed rather than
+    //    blocking the user entirely.
+    try {
+      const { data: canProceed, error: limitError } = await supabase.rpc('check_rate_limit', {
+        target_identifier: email,
+        target_endpoint: 'login_attempt',
+        max_hits: 5,
+        window_minutes: 15
+      });
+
+      if (!limitError && canProceed === false) {
+        setLoading(false);
+        setErrorMsg('Too many login attempts. Please wait 15 minutes.');
+        return;
+      }
+    } catch (e) {
+      // Rate limiter is optional — don't block login if it fails
+      console.log('Rate limit check skipped:', e);
+    }
+
     try {
       if (isSignUp) {
         let linked_senior_id = null;
@@ -46,16 +68,30 @@ export default function LoginScreen() {
           }
 
           // Validate Family Code
-          const { data, error: fetchError } = await supabase
+          const { data: senior, error: fetchError } = await supabase
             .from('profiles')
-            .select('id')
+            .select('id, is_premium')
             .eq('family_code', familyCode.trim().toUpperCase())
             .single();
 
-          if (fetchError || !data) {
+          if (fetchError || !senior) {
             throw new Error('Invalid Family Invite Code. Please verify with the Senior.');
           }
-          linked_senior_id = data.id;
+
+          // Check if senior already has a caregiver linked and is not premium
+          if (!senior.is_premium) {
+            const { count, error: countError } = await supabase
+              .from('profiles')
+              .select('id', { count: 'exact', head: true })
+              .eq('linked_senior_id', senior.id)
+              .eq('role', 'caregiver');
+
+            if (count && count >= 1) {
+              throw new Error('This Senior already has a caregiver linked. An upgrade to the Premium Plan is required to link more caregivers.');
+            }
+          }
+
+          linked_senior_id = senior.id;
         }
 
         const { data: authData, error } = await supabase.auth.signUp({ 
@@ -83,6 +119,13 @@ export default function LoginScreen() {
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) {
+          // Log failed attempt
+          await supabase.rpc('log_security_event', {
+            event_name: 'AUTH_FAILURE',
+            details: `Failed login attempt for ${email}`,
+            severity_level: 'warning'
+          });
+
           if (error.message.includes('Invalid login credentials')) {
             throw new Error('Invalid email or password. If you are a new user, please switch to Sign Up to create an account!');
           }

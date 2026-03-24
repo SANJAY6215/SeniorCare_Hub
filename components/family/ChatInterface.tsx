@@ -11,6 +11,8 @@ import {
   Alert,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
+import { Audio } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, useTextScale } from '@/hooks/useTheme';
 import { Spacing, Radius } from '@/constants/Typography';
@@ -24,6 +26,8 @@ export default function ChatInterface() {
   const profile = useUserStore((s) => s.profile);
   const { messages, fetchMessages, subscribeToMessages, unsubscribeFromMessages, sendMessage } = useMessageStore();
   const [inputText, setInputText] = useState('');
+  const [isRecording, setIsRecording] = useState(false);
+  const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const scrollViewRef = useRef<ScrollView>(null);
 
   useEffect(() => {
@@ -45,6 +49,52 @@ export default function ChatInterface() {
       await sendMessage(text);
     } catch (error: any) {
       console.error(error);
+    }
+  };
+
+  const handlePickImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.7,
+    });
+
+    if (!result.canceled && result.assets[0].uri) {
+      try {
+        await sendMessage('', { uri: result.assets[0].uri, type: 'image' });
+      } catch (error) {
+        Alert.alert('Upload Failed', 'Could not send image.');
+      }
+    }
+  };
+
+  const toggleRecording = async () => {
+    if (isRecording) {
+      // Stop recording
+      setIsRecording(false);
+      try {
+        await recording?.stopAndUnloadAsync();
+        const uri = recording?.getURI();
+        if (uri) {
+          await sendMessage('', { uri, type: 'audio' });
+        }
+      } catch (error) {
+        console.error(error);
+      }
+      setRecording(null);
+    } else {
+      // Start recording
+      try {
+        const { status } = await Audio.requestPermissionsAsync();
+        if (status !== 'granted') return;
+
+        await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+        const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+        setRecording(recording);
+        setIsRecording(true);
+      } catch (error) {
+        console.error(error);
+      }
     }
   };
 
@@ -84,7 +134,31 @@ export default function ChatInterface() {
               ]}
             >
               {!isMyMessage && <Text style={[styles.senderName, { color: colors.primary }]}>{msg.sender_name}</Text>}
-              <Text style={[styles.messageText, { color: isMyMessage ? '#FFF' : colors.text, fontSize: 15 * scale }]}>{msg.content}</Text>
+              
+              {msg.media_url && msg.media_type === 'image' && (
+                <Animated.Image 
+                  source={{ uri: msg.media_url }} 
+                  style={styles.messageImage} 
+                  resizeMode="cover"
+                />
+              )}
+
+              {msg.media_url && msg.media_type === 'audio' && (
+                <TouchableOpacity 
+                  style={styles.audioBubble}
+                  onPress={async () => {
+                    const { sound } = await Audio.Sound.createAsync({ uri: msg.media_url || '' });
+                    await sound.playAsync();
+                  }}
+                >
+                  <Ionicons name="play-circle" size={32} color={isMyMessage ? '#FFF' : colors.primary} />
+                  <Text style={[styles.audioText, { color: isMyMessage ? '#FFF' : colors.text }]}>Voice Note</Text>
+                </TouchableOpacity>
+              )}
+
+              {msg.content ? (
+                <Text style={[styles.messageText, { color: isMyMessage ? '#FFF' : colors.text, fontSize: 15 * scale }]}>{msg.content}</Text>
+              ) : null}
               <Text style={[styles.timestamp, { color: isMyMessage ? 'rgba(255,255,255,0.7)' : colors.textMuted }]}>{timeString}</Text>
             </Animated.View>
           );
@@ -93,6 +167,12 @@ export default function ChatInterface() {
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={[styles.inputContainer, { borderTopColor: colors.border, backgroundColor: colors.surface }]}>
+          <TouchableOpacity onPress={handlePickImage} style={styles.iconBtn}>
+            <Ionicons name="image" size={24} color={colors.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={toggleRecording} style={styles.iconBtn}>
+            <Ionicons name={isRecording ? "stop-circle" : "mic"} size={24} color={isRecording ? colors.danger : colors.primary} />
+          </TouchableOpacity>
           <TextInput
             value={inputText}
             onChangeText={setInputText}
@@ -125,6 +205,10 @@ const styles = StyleSheet.create({
   messageText: { fontWeight: '500', lineHeight: 20 },
   timestamp: { fontSize: 10, marginTop: 4, alignSelf: 'flex-end', fontWeight: '500' },
   inputContainer: { flexDirection: 'row', alignItems: 'center', padding: Spacing.md, gap: Spacing.sm, borderTopWidth: 1 },
+  iconBtn: { padding: 4 },
   input: { flex: 1, minHeight: 44, maxHeight: 100, borderRadius: Radius.full, paddingHorizontal: 16, paddingVertical: 10, fontWeight: '500' },
   sendBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  messageImage: { width: 240, height: 180, borderRadius: Radius.md, marginBottom: 8 },
+  audioBubble: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+  audioText: { fontWeight: '700', fontSize: 14 },
 });

@@ -88,6 +88,7 @@ export default function AccessibleButton({
               { color: textColor ?? '#FFFFFF', fontSize },
               textStyle,
             ]}
+            maxFontSizeMultiplier={1.5}
           >
             {label}
           </Text>

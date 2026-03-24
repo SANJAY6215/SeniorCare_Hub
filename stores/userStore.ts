@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { Alert, Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
+import { ProfileSchema } from '@/lib/schemas';
 
 async function registerForPushNotificationsAsync() {
   let token;
@@ -26,7 +27,9 @@ async function registerForPushNotificationsAsync() {
       console.log('Failed to get push token for push notification!');
       return undefined;
     }
-    token = (await Notifications.getExpoPushTokenAsync({ projectId: 'your-project-id' })).data;
+    token = (await Notifications.getExpoPushTokenAsync({ 
+      projectId: process.env.EXPO_PUBLIC_PROJECT_ID || '87b4c93a-5031-4b24-a15f-d1576d68a365' 
+    })).data;
   }
   return token;
 }
@@ -53,8 +56,17 @@ export interface UserProfile {
   preferredHospital: string;
   language: string;
   textSize: 'medium' | 'large' | 'extra-large';
+  gender: string;
+  dietary_profile: {
+    restrictions?: string[];
+    allergies?: string[];
+    calorie_goal?: number;
+    sodium_limit?: string;
+  };
+  isPremium: boolean;
   darkMode: boolean;
   soundEnabled: boolean;
+  expoPushToken?: string;
   vibrationEnabled: boolean;
   voiceAssistEnabled: boolean;
   lastCheckIn: string | null;
@@ -71,10 +83,12 @@ interface UserStore {
   initialize: () => Promise<void>;
   fetchSeniorProfile: () => Promise<void>;
   updateProfile: (updates: Partial<UserProfile>) => Promise<void>;
+  getTargetUserId: () => string | undefined;
   setDarkMode: (val: boolean) => void;
   setTextSize: (size: UserProfile['textSize']) => void;
   completeCheckIn: () => Promise<void>;
   signOut: () => Promise<void>;
+  setupAuthListener: () => void;
 }
 
 const defaultProfile: UserProfile = {
@@ -89,6 +103,9 @@ const defaultProfile: UserProfile = {
   preferredHospital: '',
   language: 'English',
   textSize: 'large',
+  gender: 'not_specified',
+  dietary_profile: {},
+  isPremium: false,
   darkMode: false,
   soundEnabled: true,
   vibrationEnabled: true,
@@ -97,28 +114,31 @@ const defaultProfile: UserProfile = {
   checkInStatus: 'pending',
 };
 
+const sanitize = (str: string) => {
+  if (!str) return '';
+  return str.trim().replace(/<[^>]*>?/gm, '');
+};
+
 const toDbProfile = (p: Partial<UserProfile>) => {
   const db: any = {};
   if (p.id !== undefined) db.id = p.id;
   if (p.role !== undefined) db.role = p.role;
   if (p.familyCode !== undefined) db.family_code = p.familyCode;
   if (p.linkedSeniorId !== undefined) db.linked_senior_id = p.linkedSeniorId;
-  if (p.firstName !== undefined) db.first_name = p.firstName;
-  if (p.lastName !== undefined) db.last_name = p.lastName;
+  if (p.firstName !== undefined) db.first_name = sanitize(p.firstName);
+  if (p.lastName !== undefined) db.last_name = sanitize(p.lastName);
   if (p.age !== undefined) db.age = p.age;
-  if (p.phone !== undefined) db.phone = p.phone;
-  if (p.conditions !== undefined) db.conditions = p.conditions;
+  if (p.phone !== undefined) db.phone = sanitize(p.phone);
+  if (p.conditions !== undefined) db.conditions = p.conditions.map(sanitize);
   if (p.emergencyContacts !== undefined) db.emergency_contacts = p.emergencyContacts;
-  if (p.preferredHospital !== undefined) db.preferred_hospital = p.preferredHospital;
-  if (p.language !== undefined) db.language = p.language;
+  if (p.preferredHospital !== undefined) db.preferred_hospital = sanitize(p.preferredHospital);
+  if (p.language !== undefined) db.language = sanitize(p.language);
   if (p.textSize !== undefined) db.text_size = p.textSize;
   if (p.darkMode !== undefined) db.dark_mode = p.darkMode;
+  if (p.gender !== undefined) db.gender = p.gender;
+  if (p.dietary_profile !== undefined) db.dietary_profile = p.dietary_profile;
+  if (p.isPremium !== undefined) db.is_premium = p.isPremium;
   if (p.soundEnabled !== undefined) db.sound_enabled = p.soundEnabled;
-  if (p.vibrationEnabled !== undefined) db.vibration_enabled = p.vibrationEnabled;
-  if (p.voiceAssistEnabled !== undefined) db.voice_assist_enabled = p.voiceAssistEnabled;
-  if (p.lastCheckIn !== undefined) db.last_check_in = p.lastCheckIn;
-  if (p.checkInStatus !== undefined) db.check_in_status = p.checkInStatus;
-  if (p.expo_push_token !== undefined) db.expo_push_token = p.expo_push_token;
   return db;
 };
 
@@ -136,6 +156,14 @@ const fromDbProfile = (db: any): UserProfile => ({
   preferredHospital: db.preferred_hospital || '',
   language: db.language || 'English',
   textSize: db.text_size || 'large',
+  gender: db.gender || 'not_specified',
+  dietary_profile: {
+    restrictions: db.dietary_profile?.restrictions || [],
+    allergies: db.dietary_profile?.allergies || [],
+    calorie_goal: db.dietary_profile?.calorie_goal,
+    sodium_limit: db.dietary_profile?.sodium_limit,
+  },
+  isPremium: db.is_premium || false,
   darkMode: db.dark_mode || false,
   soundEnabled: db.sound_enabled !== false,
   vibrationEnabled: db.vibration_enabled !== false,
@@ -168,9 +196,14 @@ const useUserStore = create<UserStore>((set, get) => ({
 
         // Permanently patch older accounts if they are missing a family code!
         if (parsedProfile.role === 'senior' && !parsedProfile.familyCode) {
+          // Robust 6-digit alphanumeric code
           parsedProfile.familyCode = Math.random().toString(36).substring(2, 8).toUpperCase();
           const { error } = await supabase.from('profiles').update({ family_code: parsedProfile.familyCode }).eq('id', parsedProfile.id);
-          if (error) Alert.alert('Database Sync Error', 'Could not save new code: ' + error.message);
+          if (error) {
+            console.error('Code Sync Failure:', error.message);
+            // Don't crash, but don't show the code if it wasn't saved
+            parsedProfile.familyCode = undefined;
+          }
         }
 
         // Register for push notifications and save to DB
@@ -208,8 +241,9 @@ const useUserStore = create<UserStore>((set, get) => ({
       }
     }
     set({ loading: false });
+  },
 
-    // Listen for auth changes
+  setupAuthListener: () => {
     supabase.auth.onAuthStateChange((event, session) => {
       set({ session });
       if (!session) {
@@ -235,20 +269,50 @@ const useUserStore = create<UserStore>((set, get) => ({
     }
   },
 
-  updateProfile: async (updates) => {
+  getTargetUserId: () => {
     const { profile } = get();
-    if (!profile) return;
+    if (!profile) return undefined;
+    return profile.role === 'senior' ? profile.id : profile.linkedSeniorId;
+  },
+
+  updateProfile: async (updates) => {
+    const { profile, session } = get();
+    if (!profile || !session) {
+      console.warn('Security: Attempted update without active session.');
+      return;
+    }
 
     const dbUpdates = toDbProfile(updates);
+    
+    // Partial validation for updates
+    const validation = ProfileSchema.partial().safeParse(dbUpdates);
+    if (!validation.success) {
+      console.warn('Security/Validation Failure:', validation.error.message);
+      return;
+    }
 
     const { error } = await supabase
       .from('profiles')
-      .update(dbUpdates)
+      .update(validation.data)
       .eq('id', profile.id);
 
-    if (!error) {
-      set((state) => ({ profile: { ...state.profile!, ...updates } }));
+    if (error) {
+      console.error('Update Profile Failure:', error.message);
+      Alert.alert('Update Failed', 'Your changes could not be saved securely.');
+      throw error;
     }
+
+    // Security Audit Log for potentially sensitive updates
+    if (updates.emergencyContacts || updates.phone) {
+      await supabase.rpc('log_security_event', {
+        event_name: 'SENSITIVE_PROFILE_UPDATE',
+        details: `User ${profile.firstName} updated sensitive contact/phone info.`,
+        user_id: profile.id,
+        severity_level: 'warning'
+      });
+    }
+
+    set((state) => ({ profile: { ...state.profile!, ...updates } }));
   },
 
   setDarkMode: (val) =>

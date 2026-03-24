@@ -19,6 +19,7 @@ import { Colors } from '@/constants/Colors';
 import { Spacing, Radius } from '@/constants/Typography';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Speech from 'expo-speech';
 
 const { height } = Dimensions.get('window');
 
@@ -44,8 +45,11 @@ export default function MedicationReminderModal() {
         window.speechSynthesis.speak(uttr);
       } else {
         try {
-          const Speech = require('expo-speech');
-          Speech.speak(text, { rate: 0.9, pitch: 1.0 });
+          Speech.speak(text, { 
+            language: profile?.language === 'Tamil' ? 'ta-IN' : 'en-US',
+            rate: 0.85, 
+            pitch: 1.0 
+          });
         } catch (e) {
           console.error('Speech error:', e);
         }
@@ -56,7 +60,6 @@ export default function MedicationReminderModal() {
         window.speechSynthesis.cancel();
       } else {
         try {
-          const Speech = require('expo-speech');
           Speech.stop();
         } catch (e) {}
       }

@@ -15,7 +15,9 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInDown, FadeInRight } from 'react-native-reanimated';
+import PremiumModal from '@/components/premium/PremiumModal';
 
 import { useTheme } from '@/hooks/useTheme';
 import { useTextScale } from '@/hooks/useTheme';
@@ -67,7 +69,9 @@ export default function SettingsScreen() {
   const [editHospital, setEditHospital] = useState('');
   const [editConditions, setEditConditions] = useState('');
   const [saving, setSaving] = useState(false);
+  const [showPremiumModal, setShowPremiumModal] = useState(false);
 
+  const insets = useSafeAreaInsets();
   if (!profile) return null;
 
   const textSizeOptions: Array<'medium' | 'large' | 'extra-large'> = ['medium', 'large', 'extra-large'];
@@ -100,7 +104,7 @@ export default function SettingsScreen() {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header */}
-      <Animated.View entering={FadeInDown.duration(400)} style={styles.header}>
+      <Animated.View entering={FadeInDown.duration(400)} style={[styles.header, { paddingTop: insets.top }]}>
         <TouchableOpacity onPress={() => router.back()} style={[styles.backBtn, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <Ionicons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
@@ -109,6 +113,30 @@ export default function SettingsScreen() {
       </Animated.View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+
+        {/* PREMIUM STATUS */}
+        <Animated.View entering={FadeInDown.delay(50).springify()}>
+          <PremiumModal 
+            visible={showPremiumModal} 
+            onClose={() => setShowPremiumModal(false)}
+          />
+          <Text style={[styles.sectionHeader, { color: colors.textSecondary, fontSize: 13 * scale }]}>SUBSCRIPTION</Text>
+          <TouchableOpacity 
+            onPress={() => !profile.isPremium && setShowPremiumModal(true)}
+            activeOpacity={profile.isPremium ? 1 : 0.7}
+          >
+            <LinearGradient
+              colors={profile.isPremium ? ['#10B981', '#059669'] : ['#6366F1', '#8B5CF6']}
+              style={styles.premiumCard}
+            >
+              <View style={styles.premiumText}>
+                <Text style={styles.premiumLabel}>{profile.isPremium ? 'Premium Active' : 'Upgrade to Premium'}</Text>
+                <Text style={styles.premiumSub}>{profile.isPremium ? 'Enjoy all AI features infinity' : 'Unlock AI Scanner, Voice & more'}</Text>
+              </View>
+              <Ionicons name={profile.isPremium ? "checkmark-circle" : "star"} size={32} color="#FFF" />
+            </LinearGradient>
+          </TouchableOpacity>
+        </Animated.View>
 
         {/* APPEARANCE */}
         <Animated.View entering={FadeInDown.delay(100).springify()}>
@@ -221,6 +249,37 @@ export default function SettingsScreen() {
           </View>
         </Animated.View>
 
+        {/* PREMIUM FEATURES (ONLY FOR PREMIUM) */}
+        {profile.isPremium && (
+          <Animated.View entering={FadeInDown.delay(400).springify()}>
+            <Text style={[styles.sectionHeader, { color: colors.textSecondary, fontSize: 13 * scale }]}>PREMIUM EXCLUSIVES</Text>
+            <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <SettingRow
+                icon="bluetooth"
+                iconColor="#3B82F6"
+                label="Smart Home Hub"
+                subtitle="Manage IoT health devices"
+                onPress={() => router.push('/iot-connect')}
+              />
+              <SettingRow
+                icon="shield-checkmark"
+                iconColor="#10B981"
+                label="Medical Document Vault"
+                subtitle="Secure encrypted storage"
+                onPress={() => router.push('/vault')}
+              />
+              <SettingRow
+                icon="restaurant"
+                isLast
+                iconColor="#F59E0B"
+                label="AI Meal Planner"
+                subtitle="Proactive nutrition engine"
+                onPress={() => router.push('/meal-planner')}
+              />
+            </View>
+          </Animated.View>
+        )}
+
         {/* ACCOUNT */}
         <Animated.View entering={FadeInDown.delay(500).springify()}>
           <Text style={[styles.sectionHeader, { color: colors.textSecondary, fontSize: 13 * scale }]}>ACCOUNT</Text>
@@ -229,7 +288,14 @@ export default function SettingsScreen() {
               onPress={() => {
                 Alert.alert('Sign Out', 'Are you sure you want to log out?', [
                   { text: 'Cancel', style: 'cancel' },
-                  { text: 'Log Out', style: 'destructive', onPress: signOut }
+                  { 
+                    text: 'Log Out', 
+                    style: 'destructive', 
+                    onPress: async () => {
+                      await signOut();
+                      router.replace('/login');
+                    } 
+                  }
                 ]);
               }}
               style={styles.settingTouchable}
@@ -333,4 +399,20 @@ const styles = StyleSheet.create({
   formInput: { borderWidth: 1, borderRadius: Radius.md, paddingHorizontal: Spacing.lg, paddingVertical: 14, fontSize: 16, fontWeight: '500' },
   saveBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 56, borderRadius: Radius.full, marginTop: Spacing.lg },
   saveBtnText: { color: '#FFF', fontWeight: '800', fontSize: 16 },
+  premiumCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 20,
+    borderRadius: Radius.xl,
+    marginBottom: Spacing.md,
+    elevation: 4,
+    shadowColor: '#6366F1',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+  },
+  premiumText: { flex: 1 },
+  premiumLabel: { color: 'white', fontSize: 20, fontWeight: '900' },
+  premiumSub: { color: 'rgba(255,255,255,0.8)', fontSize: 13, fontWeight: '600', marginTop: 2 },
 });

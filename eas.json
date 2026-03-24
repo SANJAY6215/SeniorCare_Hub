@@ -22,6 +22,11 @@
     },
     "production": {
       "autoIncrement": true,
+      "node": "18.18.0",
+      "env": {
+        "NODE_OPTIONS": "--max-old-space-size=4096",
+        "EAS_BUILD_NO_EXPO_GO_WARNING": "true"
+      },
       "android": {
         "buildType": "app-bundle"
       }
