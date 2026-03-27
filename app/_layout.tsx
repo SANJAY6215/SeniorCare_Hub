@@ -46,37 +46,22 @@ export default function RootLayout() {
   const { profile, session, loading, initialize } = useUserStore();
   const segments = useSegments();
   const router = useRouter();
+  const [hasMounted, setHasMounted] = React.useState(false);
 
   useEffect(() => {
-    initialize();
-    useUserStore.getState().setupAuthListener();
-    
-    // Request notification permissions
-    const registerForPushNotifications = async () => {
-      if (Platform.OS === 'web') return;
-      const { status: existingStatus } = await Notifications.getPermissionsAsync();
-      let finalStatus = existingStatus;
-      if (existingStatus !== 'granted') {
-        const { status } = await Notifications.requestPermissionsAsync();
-        finalStatus = status;
-      }
-
-      if (finalStatus === 'granted') {
-        try {
-          const tokenData = await Notifications.getExpoPushTokenAsync({
-            projectId: process.env.EXPO_PUBLIC_PROJECT_ID || '87b4c93a-5031-4b24-a15f-d1576d68a365',
-          });
-          useUserStore.getState().updateProfile({ expo_push_token: tokenData.data });
-        } catch (e) {
-          console.log('Failed to fetch push token:', e);
-        }
-      }
-    };
-    registerForPushNotifications();
+    setHasMounted(true);
   }, []);
 
   useEffect(() => {
-    if (loading) return;
+    // The userStore handles the initial setup and auth listener.
+    // Push token registration is securely handled inside userStore.initialize()
+    // once a valid Supabase session is established.
+    initialize();
+    useUserStore.getState().setupAuthListener();
+  }, []);
+
+  useEffect(() => {
+    if (!hasMounted || loading) return;
 
     const checkOnboarding = async () => {
       const seen = await AsyncStorage.getItem('onboarding_complete');
@@ -95,7 +80,7 @@ export default function RootLayout() {
       }
     };
     checkOnboarding();
-  }, [session, loading, segments]);
+  }, [hasMounted, session, loading, segments]);
 
 
   if (loading) {

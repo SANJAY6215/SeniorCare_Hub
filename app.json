@@ -35,7 +35,7 @@
         "backgroundColor": "#6366F1"
       },
       "package": "com.seniorcarehub.app",
-      "versionCode": 23,
+      "versionCode": 28,
       "permissions": [
         "CAMERA",
         "RECORD_AUDIO",
@@ -72,7 +72,11 @@
       [
         "expo-build-properties",
         {
-          "android": {}
+          "android": {
+            "compileSdkVersion": 35,
+            "targetSdkVersion": 35,
+            "buildToolsVersion": "35.0.0"
+          }
         }
       ]
     ],
@@ -82,9 +86,9 @@
         "origin": false
       },
       "eas": {
-        "projectId": "829b6eb6-a1df-4d75-97c9-1dedebc9dffd"
+        "projectId": "357bf551-eeb8-4dc7-abfe-8fa9e43fecda"
       }
     },
-    "owner": "sanjay_6215"
+    "owner": "sanjay_1000"
   }
 }
